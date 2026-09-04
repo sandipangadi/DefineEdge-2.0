@@ -1,0 +1,22 @@
+{
+  "input_present": true,
+  "csv_files": 24,
+  "positions_files": 12,
+  "activity_log_files": 12,
+  "position_trade_rows": 61,
+  "strategies": [
+    "LIQ20 BEAR AP SL12",
+    "LIQ20 BEAR AP T7",
+    "LIQ20 BEAR AP T8",
+    "LIQ20 BEAR AP V1",
+    "LIQ20 BULL AP SL12",
+    "LIQ20 BULL AP T7",
+    "LIQ20 BULL AP T8",
+    "LIQ20 BULL AP V1",
+    "LIQ50 BEAR AP V1",
+    "LIQ50 BULL AP",
+    "LIQINST BEAR AP V1",
+    "LIQINST BULL AP V1"
+  ],
+  "unique_option_symbols": 27
+}

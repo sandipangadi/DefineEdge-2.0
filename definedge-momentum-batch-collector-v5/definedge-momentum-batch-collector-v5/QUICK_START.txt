@@ -1,0 +1,53 @@
+DEFINEDGE MOMENTUM BATCH COLLECTOR V5 — QUICK START
+
+EVERY TRADING DAY:
+
+1. Download all required AlgoStra:
+   - Positions CSVs
+   - Activity Logs
+
+2. Put those CSV files into ONE ZIP.
+
+3. Open your Render V5 website.
+
+4. Enter Collector Password ONCE.
+
+5. Click "Send Definedge OTP".
+
+6. Enter the OTP.
+
+7. Upload the ONE AlgoStra ZIP.
+
+8. Keep:
+   - Before entry = 3 minutes
+   - After exit = 15 minutes
+   - ATM chain = checked
+
+9. Click "Start Full Collection".
+
+10. Wait for the progress page to finish.
+
+11. Click "Download Full Analysis ZIP".
+
+12. Upload that ONE final ZIP to the
+    Momentum Trading / Stock Options ChatGPT project.
+
+THAT'S IT.
+
+MAIN CHATGPT ANALYSIS FILE:
+analysis/trade_metrics.csv
+
+V5 ALSO INCLUDES:
+- exact option ticks
+- LTP / LTQ / OI
+- underlying ticks
+- ATM-1 / ATM / ATM+1 CE + PE
+- MFE / MAE
+- peak profit give-back
+- post-exit movement
+- strategy comparison
+- duplicate-trade comparison
+- Activity Log max-loss / square-off information
+
+DO NOT upload individual tick CSVs one by one.
+Use the single final V5 output ZIP.

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge Momentum Batch Collector V5</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:880px;margin:40px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+h1{margin-top:0}.muted{color:#5c6675;line-height:1.55}.ok,.err,.info{padding:13px 15px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}.info{background:#eef5ff}
+button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer}
+input[type=password],input[type=number],input[type=file]{padding:10px;margin:5px 0 14px;max-width:100%}
+.section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
+.row{display:flex;gap:18px;flex-wrap:wrap}.small{font-size:13px;color:#687284;line-height:1.55}
+label{font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Definedge Momentum Batch Collector V5</h1>
+
+<p class="muted">
+Upload <b>one ZIP</b> containing all the AlgoStra
+<b>Positions CSVs + Activity Logs</b> for the day.
+V5 detects every strategy, removes duplicate market-data downloads,
+fetches Definedge ticks and produces one complete analysis ZIP.
+</p>
+
+<div class="info">
+<b>Daily input:</b><br>
+A ZIP like <b>algostravirtualtradelogsandpositionscsvfiles.zip</b>.<br><br>
+You do not upload each strategy separately.
+</div>
+
+{% if message %}<div class="ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+{% if not otp_sent %}
+<div class="section">
+<form method="post" action="/send-otp">
+<label>Collector password</label><br>
+<input type="password" name="collector_password" required><br>
+<button type="submit">1. Send Definedge OTP</button>
+</form>
+</div>
+{% endif %}
+
+{% if otp_sent %}
+<div class="section">
+<form method="post" action="/collect" enctype="multipart/form-data">
+
+<label>2. Definedge OTP</label><br>
+<input type="password" name="otp" inputmode="numeric" autocomplete="one-time-code" required><br>
+
+<label>3. Full AlgoStra ZIP</label><br>
+<input type="file" name="batch_zip" accept=".zip,application/zip" required>
+
+<div class="row">
+<div>
+<label>Minutes before each entry</label><br>
+<input type="number" name="before_min" value="3" min="0" max="60">
+</div>
+<div>
+<label>Minutes after each exit</label><br>
+<input type="number" name="after_min" value="15" min="0" max="180">
+</div>
+</div>
+
+<label>
+<input type="checkbox" name="include_chain" value="yes" checked>
+Also collect entry ATM-1 / ATM / ATM+1 for both CE and PE
+</label><br><br>
+
+<button type="submit">4. Start Full Collection</button>
+</form>
+</div>
+{% endif %}
+
+<div class="section small">
+<b>Output:</b> one ZIP containing the original AlgoStra files,
+exact traded-option ticks, underlying ticks, relevant option-chain ticks,
+broker snapshots, MFE/MAE, peak give-back, post-exit movement,
+strategy comparison and duplicate-trade mapping.
+</div>
+</div>
+</body>
+</html>

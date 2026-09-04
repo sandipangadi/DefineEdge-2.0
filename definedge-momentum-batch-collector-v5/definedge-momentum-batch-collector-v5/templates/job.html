@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge V5 Collection</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:760px;margin:50px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+.bar{height:18px;background:#e7eaf0;border-radius:9px;overflow:hidden}
+.fill{height:100%;width:0;background:#5c6f91;transition:width .4s}
+.msg{margin-top:16px;line-height:1.5}.download{display:none;margin-top:20px}
+a.btn{display:inline-block;padding:12px 18px;border-radius:9px;background:#172033;color:#fff;text-decoration:none}
+.err{color:#a32222}
+.small{font-size:13px;color:#687284;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Collecting Definedge market data…</h1>
+
+<div class="bar">
+<div id="fill" class="fill"></div>
+</div>
+
+<div id="pct" class="msg">Starting…</div>
+<div id="message" class="msg"></div>
+
+<div id="download" class="download">
+<a class="btn" href="/download/{{ job_id }}">Download Full Analysis ZIP</a>
+</div>
+
+<div class="small">
+Keep this page open. V5 works in the background and updates this page automatically.
+</div>
+</div>
+
+<script>
+const jobId = "{{ job_id }}";
+
+async function poll(){
+  try{
+    const r = await fetch(`/status/${jobId}`, {cache:"no-store"});
+    const d = await r.json();
+
+    document.getElementById("fill").style.width = `${d.progress || 0}%`;
+    document.getElementById("pct").textContent = `${d.progress || 0}%`;
+    document.getElementById("message").textContent = d.message || "";
+
+    if(d.status === "done"){
+      document.getElementById("download").style.display = "block";
+      return;
+    }
+
+    if(d.status === "error" || d.status === "missing"){
+      document.getElementById("message").classList.add("err");
+      return;
+    }
+
+    setTimeout(poll, 1800);
+  }catch(e){
+    document.getElementById("message").textContent = "Waiting for service…";
+    setTimeout(poll, 3000);
+  }
+}
+
+poll();
+</script>
+</body>
+</html>
