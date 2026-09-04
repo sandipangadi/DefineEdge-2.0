@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge Momentum Tick Collector V2</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:820px;margin:42px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+h1{margin-top:0}.muted{color:#5c6675;line-height:1.5}.ok,.err,.warn{padding:12px 14px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}.warn{background:#fff5d9}
+button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer}
+input[type=password],input[type=number],input[type=file]{padding:10px;margin:5px 0 14px;max-width:100%}
+.section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
+.row{display:flex;gap:18px;flex-wrap:wrap}.small{font-size:13px;color:#687284;line-height:1.5}
+label{font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Definedge Momentum Tick Collector V2</h1>
+<p class="muted">Trade log → exact NFO option → ticks + underlying + entry ATM chain + MFE/MAE package.</p>
+
+{% if message %}<div class="ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+{% if not password_enabled %}
+<div class="warn"><b>Security:</b> set COLLECTOR_PASSWORD in Render so strangers cannot trigger OTPs from your public Render URL.</div>
+{% endif %}
+
+<div class="section">
+<form method="post" action="/send-otp">
+{% if password_enabled %}
+<label>Collector password</label><br>
+<input type="password" name="collector_password" required><br>
+{% endif %}
+<button type="submit">1. Send Definedge OTP</button>
+</form>
+</div>
+
+<div class="section">
+<form method="post" action="/collect" enctype="multipart/form-data">
+{% if password_enabled %}
+<label>Collector password</label><br>
+<input type="password" name="collector_password" required><br>
+{% endif %}
+
+<label>2. Definedge OTP</label><br>
+<input type="password" name="otp" inputmode="numeric" autocomplete="one-time-code" required><br>
+
+<label>3. Momentum / AlgoStra trade-log CSV</label><br>
+<input type="file" name="trade_log" accept=".csv,text/csv" required>
+
+<div class="row">
+<div>
+<label>Minutes before entry</label><br>
+<input type="number" name="before_min" value="3" min="0" max="60">
+</div>
+<div>
+<label>Minutes after exit</label><br>
+<input type="number" name="after_min" value="15" min="0" max="180">
+</div>
+</div>
+
+<label>
+<input type="checkbox" name="include_chain" value="yes" checked>
+Include entry ATM-1 / ATM / ATM+1 for both CE and PE
+</label><br><br>
+
+<button type="submit">4. Collect & Download Analysis ZIP</button>
+</form>
+</div>
+
+<div class="section small">
+<b>V2 improvements:</b> supports Entry Time 1 / Exit Time 1 style AlgoStra logs; matches against today's Definedge trade book when the CSV lacks the exact option token; refuses ambiguous matches instead of guessing; adds 1-minute backup data; saves orders/trades/positions/limits; and creates trade_metrics.csv automatically.
+</div>
+</div>
+</body>
+</html>
