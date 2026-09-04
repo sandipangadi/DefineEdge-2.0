@@ -1,0 +1,9 @@
+{
+  "actual_log_entries_detected": [
+    "ANGELONE29SEP26P300",
+    "RVNL29SEP26P210",
+    "TCS29SEP26P2340"
+  ],
+  "all_exact_symbols_present_in_embedded_nfo_master": true,
+  "expected_trade_count": 3
+}

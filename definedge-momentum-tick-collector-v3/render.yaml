@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: definedge-momentum-tick-collector-v3
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 180 app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DEFINEDGE_API_TOKEN
+        sync: false
+      - key: DEFINEDGE_API_SECRET
+        sync: false
+      - key: COLLECTOR_PASSWORD
+        sync: false

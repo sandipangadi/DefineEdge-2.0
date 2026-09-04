@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge Momentum Tick Collector V3</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:820px;margin:42px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+h1{margin-top:0}.muted{color:#5c6675;line-height:1.5}.ok,.err{padding:12px 14px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}
+button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer}
+input[type=password],input[type=number],input[type=file]{padding:10px;margin:5px 0 14px;max-width:100%}
+.section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
+.row{display:flex;gap:18px;flex-wrap:wrap}.small{font-size:13px;color:#687284;line-height:1.5}
+label{font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Definedge Momentum Tick Collector V3</h1>
+<p class="muted">
+Use the CSV downloaded from <b>AlgoStra → Logs → your strategy</b>.
+V3 understands the actual strategy-log format such as <b>LIQ20 BEAR AP V1</b>.
+</p>
+
+{% if message %}<div class="ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+{% if not otp_sent %}
+<div class="section">
+<form method="post" action="/send-otp">
+<label>Collector password</label><br>
+<input type="password" name="collector_password" required><br>
+<button type="submit">1. Send Definedge OTP</button>
+</form>
+</div>
+{% endif %}
+
+{% if otp_sent %}
+<div class="section">
+<form method="post" action="/collect" enctype="multipart/form-data">
+
+<label>2. Definedge OTP</label><br>
+<input type="password" name="otp" inputmode="numeric" autocomplete="one-time-code" required><br>
+
+<label>3. AlgoStra strategy-log CSV</label><br>
+<input type="file" name="trade_log" accept=".csv,text/csv" required>
+
+<div class="row">
+<div>
+<label>Minutes before entry</label><br>
+<input type="number" name="before_min" value="3" min="0" max="60">
+</div>
+<div>
+<label>Minutes after exit</label><br>
+<input type="number" name="after_min" value="15" min="0" max="180">
+</div>
+</div>
+
+<label>
+<input type="checkbox" name="include_chain" value="yes" checked>
+Include entry ATM-1 / ATM / ATM+1 for both CE and PE
+</label><br><br>
+
+<button type="submit">4. Collect & Download Analysis ZIP</button>
+</form>
+</div>
+{% endif %}
+
+<div class="section small">
+<b>You do not need a separate “trade report”.</b>
+The strategy log you downloaded from LIQ20 BEAR AP V1 is exactly the file to upload here.
+V3 reads ENTRY1 / EXIT rows, extracts the exact option trading symbol, pairs entry and exit,
+then pulls Definedge tick data.
+</div>
+</div>
+</body>
+</html>
