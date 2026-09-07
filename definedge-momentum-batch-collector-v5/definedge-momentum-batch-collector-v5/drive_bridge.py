@@ -3,12 +3,14 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _credentials():
@@ -71,7 +73,8 @@ def publish_package(zip_path, evidence_parent_id, status_parent_id=None, source_
     if not evidence_parent_id:
         raise RuntimeError("Missing GOOGLE_DRIVE_EVIDENCE_FOLDER_ID.")
     service = _service()
-    day = datetime.now().astimezone().date().isoformat()
+    now_ist = datetime.now(IST)
+    day = now_ist.date().isoformat()
     day_folder_id = _ensure_date_folder(evidence_parent_id, day)
     path = Path(zip_path)
     uploaded = service.files().create(
@@ -82,7 +85,7 @@ def publish_package(zip_path, evidence_parent_id, status_parent_id=None, source_
 
     manifest = {
         "pipeline_version": "6.0",
-        "created_at": datetime.now().astimezone().isoformat(),
+        "created_at_ist": now_ist.isoformat(),
         "source": source_meta or {},
         "analysis_package": uploaded,
         "job_summary": job_summary or {},
@@ -91,9 +94,6 @@ def publish_package(zip_path, evidence_parent_id, status_parent_id=None, source_
     manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
     manifest_name = path.stem + "_manifest.json"
     target_parent = status_parent_id or day_folder_id
-    media = MediaIoBaseDownload  # keeps import explicit for packaging tools
-    del media
-    from googleapiclient.http import MediaIoBaseUpload
     service.files().create(
         body={"name": manifest_name, "parents": [target_parent]},
         media_body=MediaIoBaseUpload(io.BytesIO(manifest_bytes), mimetype="application/json", resumable=False),
