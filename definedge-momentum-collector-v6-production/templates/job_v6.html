@@ -10,8 +10,8 @@ body{font-family:Arial,sans-serif;max-width:780px;margin:50px auto;padding:0 18p
 .badge{display:inline-block;background:#172033;color:#fff;padding:5px 9px;border-radius:999px;font-size:12px;margin-bottom:10px}
 .bar{height:18px;background:#e7eaf0;border-radius:9px;overflow:hidden}.fill{height:100%;width:0;background:#5c6f91;transition:width .4s}
 .msg{margin-top:16px;line-height:1.5}.actions{display:none;margin-top:20px;gap:10px;flex-wrap:wrap}
-a.btn{display:inline-block;padding:12px 18px;border-radius:9px;background:#172033;color:#fff;text-decoration:none}
-a.alt{background:#5c6675}.err{color:#a32222}.small{font-size:13px;color:#687284;margin-top:18px;line-height:1.5}
+a.btn,button.btn{display:inline-block;padding:12px 18px;border-radius:9px;background:#172033;color:#fff;text-decoration:none;border:0;font-size:15px;cursor:pointer}
+a.alt,button.alt{background:#5c6675}.err{color:#a32222}.small{font-size:13px;color:#687284;margin-top:18px;line-height:1.5}.copied{color:#18743b;font-weight:600;margin-top:10px;display:none}
 </style>
 </head>
 <body>
@@ -24,12 +24,21 @@ a.alt{background:#5c6675}.err{color:#a32222}.small{font-size:13px;color:#687284;
 <div id="actions" class="actions">
 <a id="drive" class="btn" href="#" target="_blank" rel="noopener">Open Evidence ZIP in Drive</a>
 <a id="download" class="btn alt" href="/download/{{ job_id }}">Download Evidence ZIP</a>
+<button id="copychat" class="btn" type="button" onclick="copyChatLink()">Copy Evidence Link for ChatGPT</button>
 </div>
-<div id="fallbacknote" class="small" style="display:none"><b>Drive publishing did not complete.</b> The reconstruction package is still available from this Render job. Downloading it does not require a Definedge rerun.</div>
+<div id="copied" class="copied">Evidence link copied. Paste it into ChatGPT and I can fetch the ZIP directly.</div>
+<div id="fallbacknote" class="small" style="display:none"><b>Drive publishing did not complete.</b> The reconstruction package is still available from this Render job. You do not need to rerun Definedge. Use <b>Copy Evidence Link for ChatGPT</b> and paste the link in your Trading Brain chat.</div>
 <div class="small">Keep this page open while collection runs. V6 preserves the completed ZIP if the final Drive publication step fails.</div>
 </div>
 <script>
 const jobId = "{{ job_id }}";
+function evidenceUrl(){ return `${window.location.origin}/download/${jobId}`; }
+async function copyChatLink(){
+  const url = evidenceUrl();
+  try{ await navigator.clipboard.writeText(url); }
+  catch(e){ window.prompt("Copy this evidence link for ChatGPT:", url); }
+  document.getElementById("copied").style.display = "block";
+}
 async function poll(){
   try{
     const r = await fetch(`/status/${jobId}`, {cache:"no-store"});
@@ -40,11 +49,13 @@ async function poll(){
     const actions = document.getElementById("actions");
     const drive = document.getElementById("drive");
     const download = document.getElementById("download");
+    const copychat = document.getElementById("copychat");
     const url = d.summary && d.summary.drive_file_url;
     if(d.status === "done"){
       if(url){ drive.href = url; drive.style.display = "inline-block"; }
       else { drive.style.display = "none"; }
       download.style.display = d.download_ready ? "inline-block" : "none";
+      copychat.style.display = d.download_ready ? "inline-block" : "none";
       actions.style.display = "flex";
       return;
     }
@@ -53,6 +64,7 @@ async function poll(){
       drive.style.display = "none";
       if(d.download_ready){
         download.style.display = "inline-block";
+        copychat.style.display = "inline-block";
         actions.style.display = "flex";
         document.getElementById("fallbacknote").style.display = "block";
       }else{
