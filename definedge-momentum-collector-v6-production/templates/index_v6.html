@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Definedge Momentum Collector V6.1.2</title>
+<title>Definedge Momentum Collector V6.2</title>
 <style>
 body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 18px;background:#f4f6f8;color:#172033}
 .card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
-h1{margin-top:0}.muted{color:#5c6675;line-height:1.55}.ok,.err,.info{padding:13px 15px;border-radius:9px;margin:16px 0}
-.ok{background:#eaf8ee}.err{background:#fdecec}.info{background:#eef5ff}
+h1{margin-top:0}.muted{color:#5c6675;line-height:1.55}.ok,.err,.info,.warn{padding:13px 15px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}.info{background:#eef5ff}.warn{background:#fff4d8;color:#6b4b00}
 .badge{display:inline-block;background:#172033;color:#fff;padding:5px 9px;border-radius:999px;font-size:12px;margin-bottom:10px}
 button,.btn{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer;text-decoration:none;display:inline-block}
 button{background:#172033;color:#fff}.secondary{background:#e7eaf0;color:#172033}.retryrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
@@ -20,18 +20,23 @@ label{font-weight:600}
 </head>
 <body>
 <div class="card">
-<div class="badge">PRODUCTION V6.1.2</div>
+<div class="badge">PRODUCTION V6.2</div>
 <h1>Definedge Momentum Batch Collector V6</h1>
 <p class="muted">V6 reads the latest AlgoStra ZIP directly from the Trading Brain Drive inbox, authenticates Definedge by OTP, runs the frozen V5 reconstruction engine, and publishes the completed evidence package back to Drive.</p>
 
 <div class="info"><b>Daily action:</b> keep one AlgoStra source ZIP directly inside the configured Drive inbox, then authenticate here. API secrets, passwords and OTPs stay out of Drive.</div>
 
 {% if drive_missing %}<div class="err"><b>V6 setup incomplete:</b> {{ drive_missing|join(', ') }}</div>{% endif %}
+{% if drive_write_ready %}
+<div class="ok"><b>Drive publishing:</b> User OAuth enabled. Evidence ZIPs will be written using your Google Drive storage.</div>
+{% else %}
+<div class="warn"><b>Drive publishing:</b> Service-account read mode only. The inbox can be read, but Google will not allow this identity to create new files in My Drive. Evidence reconstruction can still finish and expose a Download Evidence ZIP button until user OAuth is connected.</div>
+{% endif %}
 {% if message %}<div class="ok">{{ message }}</div>{% endif %}
 {% if error %}
 <div class="err">
   <b>Action failed:</b> {{ error }}
-  {% if otp_sent %}<div class="small" style="margin-top:8px">Use <b>Send Fresh OTP</b> below and enter only the newest OTP.</div>{% endif %}
+  {% if otp_sent %}<div class="small" style="margin-top:8px">Use <b>Send Fresh OTP</b> below and enter only the newest OTP if the error is OTP-related.</div>{% endif %}
 </div>
 {% endif %}
 
