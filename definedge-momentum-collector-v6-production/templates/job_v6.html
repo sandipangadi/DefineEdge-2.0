@@ -11,12 +11,12 @@ body{font-family:Arial,sans-serif;max-width:780px;margin:50px auto;padding:0 18p
 .bar{height:18px;background:#e7eaf0;border-radius:9px;overflow:hidden}.fill{height:100%;width:0;background:#5c6f91;transition:width .4s}
 .msg{margin-top:16px;line-height:1.5}.actions{display:none;margin-top:20px;gap:10px;flex-wrap:wrap}
 a.btn{display:inline-block;padding:12px 18px;border-radius:9px;background:#172033;color:#fff;text-decoration:none}
-a.alt{background:#5c6675}.err{color:#a32222}.warn{color:#8a5a00}.small{font-size:13px;color:#687284;margin-top:18px;line-height:1.5}
+a.alt{background:#5c6675}.err{color:#a32222}.small{font-size:13px;color:#687284;margin-top:18px;line-height:1.5}
 </style>
 </head>
 <body>
 <div class="card">
-<div class="badge">PRODUCTION V6.1.3</div>
+<div class="badge">PRODUCTION V6.2</div>
 <h1>Building Trading Brain evidence package…</h1>
 <div class="bar"><div id="fill" class="fill"></div></div>
 <div id="pct" class="msg">Starting…</div>
@@ -25,8 +25,8 @@ a.alt{background:#5c6675}.err{color:#a32222}.warn{color:#8a5a00}.small{font-size
 <a id="drive" class="btn" href="#" target="_blank" rel="noopener">Open Evidence ZIP in Drive</a>
 <a id="download" class="btn alt" href="/download/{{ job_id }}">Download Evidence ZIP</a>
 </div>
-<div id="fallbacknote" class="small" style="display:none"><b>Drive publish failed after reconstruction.</b> The evidence ZIP may still be available from this Render job. Download it before the service restarts. You do not need to rerun Definedge collection if the download succeeds.</div>
-<div class="small">Keep this page open while collection runs. If Drive publication fails after reconstruction, the page will expose the local evidence ZIP instead of hiding it.</div>
+<div id="fallbacknote" class="small" style="display:none"><b>Drive publishing did not complete.</b> The reconstruction package is still available from this Render job. Downloading it does not require a Definedge rerun.</div>
+<div class="small">Keep this page open while collection runs. V6 preserves the completed ZIP if the final Drive publication step fails.</div>
 </div>
 <script>
 const jobId = "{{ job_id }}";
@@ -37,20 +37,27 @@ async function poll(){
     document.getElementById("fill").style.width = `${d.progress || 0}%`;
     document.getElementById("pct").textContent = `${d.progress || 0}%`;
     document.getElementById("message").textContent = d.message || "";
+    const actions = document.getElementById("actions");
+    const drive = document.getElementById("drive");
+    const download = document.getElementById("download");
+    const url = d.summary && d.summary.drive_file_url;
     if(d.status === "done"){
-      const actions = document.getElementById("actions");
-      const drive = document.getElementById("drive");
-      const url = d.summary && d.summary.drive_file_url;
       if(url){ drive.href = url; drive.style.display = "inline-block"; }
       else { drive.style.display = "none"; }
+      download.style.display = d.download_ready ? "inline-block" : "none";
       actions.style.display = "flex";
       return;
     }
     if(d.status === "error"){
       document.getElementById("message").classList.add("err");
-      document.getElementById("drive").style.display = "none";
-      document.getElementById("actions").style.display = "flex";
-      document.getElementById("fallbacknote").style.display = "block";
+      drive.style.display = "none";
+      if(d.download_ready){
+        download.style.display = "inline-block";
+        actions.style.display = "flex";
+        document.getElementById("fallbacknote").style.display = "block";
+      }else{
+        actions.style.display = "none";
+      }
       return;
     }
     if(d.status === "missing"){
