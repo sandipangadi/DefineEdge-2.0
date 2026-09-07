@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Definedge Momentum Collector V6.1</title>
+<title>Definedge Momentum Collector V6.1.2</title>
 <style>
 body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 18px;background:#f4f6f8;color:#172033}
 .card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
 h1{margin-top:0}.muted{color:#5c6675;line-height:1.55}.ok,.err,.info{padding:13px 15px;border-radius:9px;margin:16px 0}
 .ok{background:#eaf8ee}.err{background:#fdecec}.info{background:#eef5ff}
 .badge{display:inline-block;background:#172033;color:#fff;padding:5px 9px;border-radius:999px;font-size:12px;margin-bottom:10px}
-button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer}
+button,.btn{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer;text-decoration:none;display:inline-block}
+button{background:#172033;color:#fff}.secondary{background:#e7eaf0;color:#172033}.retryrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 input[type=password],input[type=number]{padding:10px;margin:5px 0 14px;max-width:100%}
 .section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
 .row{display:flex;gap:18px;flex-wrap:wrap}.small{font-size:13px;color:#687284;line-height:1.55}
@@ -19,15 +20,20 @@ label{font-weight:600}
 </head>
 <body>
 <div class="card">
-<div class="badge">PRODUCTION V6.1</div>
+<div class="badge">PRODUCTION V6.1.2</div>
 <h1>Definedge Momentum Batch Collector V6</h1>
-<p class="muted">V6 reads the latest AlgoStra ZIP directly from the configured Trading Brain Drive inbox, authenticates Definedge by OTP, runs the proven V5 tick/chain reconstruction engine, and publishes the complete evidence ZIP back to Drive.</p>
+<p class="muted">V6 reads the latest AlgoStra ZIP directly from the Trading Brain Drive inbox, authenticates Definedge by OTP, runs the frozen V5 reconstruction engine, and publishes the completed evidence package back to Drive.</p>
 
-<div class="info"><b>Daily action:</b> put one AlgoStra ZIP in the configured Drive inbox, then authenticate here. Do not upload API secrets, passwords or OTPs to Drive. The ZIP must be a direct file inside the configured inbox folder.</div>
+<div class="info"><b>Daily action:</b> keep one AlgoStra source ZIP directly inside the configured Drive inbox, then authenticate here. API secrets, passwords and OTPs stay out of Drive.</div>
 
 {% if drive_missing %}<div class="err"><b>V6 setup incomplete:</b> {{ drive_missing|join(', ') }}</div>{% endif %}
 {% if message %}<div class="ok">{{ message }}</div>{% endif %}
-{% if error %}<div class="err">{{ error }}</div>{% endif %}
+{% if error %}
+<div class="err">
+  <b>Action failed:</b> {{ error }}
+  {% if otp_sent %}<div class="small" style="margin-top:8px">Use <b>Send Fresh OTP</b> below and enter only the newest OTP.</div>{% endif %}
+</div>
+{% endif %}
 
 {% if not otp_sent %}
 <div class="section">
@@ -52,10 +58,18 @@ label{font-weight:600}
 <label><input type="checkbox" name="include_chain" value="yes" checked> Collect ATM-1 / ATM / ATM+1 for both CE and PE</label><br><br>
 <button type="submit">3. Authenticate + Run Full Evidence Pipeline</button>
 </form>
+
+<div class="retryrow">
+<form method="post" action="/resend-otp">
+<button class="secondary" type="submit">Send Fresh OTP</button>
+</form>
+<a class="btn secondary" href="/">Start Over</a>
+</div>
+<div class="small" style="margin-top:10px">If an OTP fails or expires, do not reuse it. Click <b>Send Fresh OTP</b> and use the latest code received.</div>
 </div>
 {% endif %}
 
-<div class="section small"><b>Pipeline:</b> Drive AlgoStra Inbox → Definedge OTP → V5 reconstruction engine → exact option + underlying + chain ticks → MFE/MAE/give-back/duplicates/strategy comparison → Drive Daily Evidence + manifest.</div>
+<div class="section small"><b>Pipeline:</b> Drive AlgoStra Inbox → Definedge OTP → exact option + underlying + ATM chain ticks → MFE/MAE/give-back/duplicates/strategy comparison → Drive Daily Evidence + manifest.</div>
 </div>
 </body>
 </html>
