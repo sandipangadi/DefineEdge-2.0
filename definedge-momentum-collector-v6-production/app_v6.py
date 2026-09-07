@@ -4,6 +4,7 @@ import secrets
 import sys
 import threading
 import time
+from hashlib import sha256
 from pathlib import Path
 
 from flask import jsonify, make_response, render_template, request
@@ -59,6 +60,19 @@ def _drive_config_status():
     return missing
 
 
+def _render_index(otp_sent=False, message=None, error=None, status_code=200):
+    return (
+        render_template(
+            "index_v6.html",
+            otp_sent=otp_sent,
+            message=message,
+            error=error,
+            drive_missing=_drive_config_status(),
+        ),
+        status_code,
+    )
+
+
 def home_v6():
     legacy.cleanup_jobs()
     return render_template(
@@ -92,45 +106,106 @@ def send_otp_route_v6():
         return response
 
     except Exception as exc:
-        return (
+        return _render_index(
+            otp_sent=False,
+            error=str(exc),
+            status_code=400,
+        )
+
+
+def resend_otp_route_v6():
+    """Send a new OTP without asking for the collector password again."""
+    try:
+        legacy.cleanup_states()
+        state_id = request.cookies.get("de_state", "")
+        state = legacy.OTP_STATES.get(state_id)
+
+        if not state or not state.get("password_verified"):
+            raise RuntimeError(
+                "Collector session expired. Enter the collector password and send a new OTP."
+            )
+
+        response = legacy.HTTP.get(
+            legacy.LOGIN_URL + legacy.API_TOKEN,
+            headers={"api_secret": legacy.API_SECRET},
+            timeout=30,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                f"Definedge fresh OTP request failed ({response.status_code}): "
+                f"{response.text[:500]}"
+            )
+
+        data = response.json()
+        otp_token = data.get("otp_token")
+        if not otp_token:
+            raise RuntimeError(
+                "Definedge returned success but no otp_token for the fresh OTP."
+            )
+
+        state["otp_token"] = otp_token
+        state["created"] = time.time()
+        state["password_verified"] = True
+
+        page = make_response(
             render_template(
                 "index_v6.html",
-                otp_sent=False,
-                error=str(exc),
+                otp_sent=True,
+                message="Fresh Definedge OTP sent. Use the newest OTP only.",
                 drive_missing=_drive_config_status(),
-            ),
-            400,
+            )
+        )
+        page.set_cookie(
+            "de_state",
+            state_id,
+            max_age=legacy.OTP_TTL_SECONDS,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+        )
+        return page
+
+    except Exception as exc:
+        return _render_index(
+            otp_sent=False,
+            error=str(exc),
+            status_code=400,
         )
 
 
 def authenticate_v6(state_id, otp):
-    """Definedge login step 2 using the complete JSON payload.
+    """Definedge login step 2 matching the current official pyintegrate client.
 
-    The current signin endpoint consumes application/json. The previous V5
-    compatibility path first sent only otp_token+otp as JSON and then retried
-    as form data. That produced 400 followed by RESTEasy 415. V6 sends the
-    documented client/grant/secret/OTP fields together as JSON in one request.
+    Official flow:
+      ac = sha256(otp_token + otp + api_secret)
+      POST JSON {"otp_token": ..., "otp": ..., "ac": ...}
     """
     legacy.cleanup_states()
     state = legacy.OTP_STATES.get(state_id)
     if not state or not state.get("password_verified"):
-        raise RuntimeError("OTP session expired. Click Send Definedge OTP again.")
+        raise RuntimeError(
+            "OTP session expired. Use Send Fresh OTP or start again with the collector password."
+        )
 
     otp_code = str(otp or "").strip()
     if not otp_code:
         raise RuntimeError("Enter the Definedge OTP.")
 
-    payload = {
-        "client_id": "TRTP",
-        "grant_type": "password",
-        "client_secret": legacy.API_SECRET,
-        "otp_token": state["otp_token"],
-        "otp": otp_code,
-    }
+    otp_token = str(state.get("otp_token") or "").strip()
+    if not otp_token:
+        raise RuntimeError("OTP token is missing. Click Send Fresh OTP.")
+
+    ac = sha256(
+        f"{otp_token}{otp_code}{legacy.API_SECRET}".encode("utf-8")
+    ).hexdigest()
 
     response = legacy.HTTP.post(
         legacy.TOKEN_URL,
-        json=payload,
+        json={
+            "otp_token": otp_token,
+            "otp": otp_code,
+            "ac": ac,
+        },
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -144,23 +219,26 @@ def authenticate_v6(state_id, otp):
             body = response.json()
             if isinstance(body, dict):
                 detail = (
-                    body.get("error_description")
-                    or body.get("message")
+                    body.get("message")
+                    or body.get("error_description")
                     or body.get("error")
                     or detail
                 )
         except Exception:
             pass
         raise RuntimeError(
-            f"Definedge OTP authentication failed ({response.status_code}): {detail}"
+            f"Definedge OTP authentication failed ({response.status_code}): {detail}. "
+            "Use Send Fresh OTP and enter the newest OTP."
         )
 
     try:
         data = response.json()
     except Exception as exc:
-        raise RuntimeError("Definedge authentication returned a non-JSON response.") from exc
+        raise RuntimeError(
+            "Definedge authentication returned a non-JSON response."
+        ) from exc
 
-    session_key = legacy.extract_session_key(data)
+    session_key = data.get("api_session_key") or legacy.extract_session_key(data)
     if not session_key:
         raise RuntimeError(
             "Definedge authentication succeeded but no usable api_session_key was returned."
@@ -239,7 +317,7 @@ def job_worker_v6(
                 "drive_file_id": uploaded.get("id", ""),
                 "drive_file_name": uploaded.get("name", ""),
                 "drive_file_url": uploaded.get("webViewLink", ""),
-                "pipeline_version": "6.1.1",
+                "pipeline_version": "6.1.2",
                 "reconstruction_engine": "V5 frozen",
                 "ready_for_trading_brain": True,
                 "manifest_status": manifest.get("status", ""),
@@ -305,7 +383,7 @@ def collect_route_v6():
                 "output_path": "",
                 "output_filename": "",
                 "summary": {
-                    "pipeline_version": "6.1.1",
+                    "pipeline_version": "6.1.2",
                     "ready_for_trading_brain": False,
                 },
             }
@@ -333,14 +411,10 @@ def collect_route_v6():
         return response
 
     except Exception as exc:
-        return (
-            render_template(
-                "index_v6.html",
-                otp_sent=True,
-                error=str(exc),
-                drive_missing=_drive_config_status(),
-            ),
-            400,
+        return _render_index(
+            otp_sent=True,
+            error=str(exc),
+            status_code=400,
         )
 
 
@@ -389,7 +463,7 @@ def health_v6():
     missing = _drive_config_status()
     return {
         "status": "ok" if not missing else "configuration_incomplete",
-        "version": "6.1.1",
+        "version": "6.1.2",
         "reconstruction_engine": "V5 frozen",
         "drive_configured": not bool(missing),
         "missing_configuration": missing,
@@ -402,6 +476,15 @@ app.view_functions["send_otp_route"] = send_otp_route_v6
 app.view_functions["collect_route"] = collect_route_v6
 app.view_functions["status_route"] = status_route_v6
 app.view_functions["health"] = health_v6
+
+# V6-only retry route.
+if "resend_otp_v6" not in app.view_functions:
+    app.add_url_rule(
+        "/resend-otp",
+        endpoint="resend_otp_v6",
+        view_func=resend_otp_route_v6,
+        methods=["POST"],
+    )
 
 
 if __name__ == "__main__":
