@@ -7,7 +7,7 @@ import time
 from hashlib import sha256
 from pathlib import Path
 
-from flask import jsonify, make_response, render_template, request
+from flask import jsonify, make_response, render_template, request, send_file
 from jinja2 import FileSystemLoader
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,13 +19,16 @@ LEGACY_APP_PATH = (
     / "app.py"
 )
 
-# Production-only modules resolve from this clean V6 folder first.
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from drive_bridge import latest_zip_from_folder, publish_package
+from drive_bridge import (
+    drive_auth_mode,
+    latest_zip_from_folder,
+    oauth_write_configured,
+    publish_package,
+)
 
-# Load V5 only as the frozen reconstruction/data engine.
 if not LEGACY_APP_PATH.exists():
     raise RuntimeError(f"Frozen V5 engine not found: {LEGACY_APP_PATH}")
 
@@ -51,8 +54,8 @@ STATUS_FOLDER_ID = os.getenv("GOOGLE_DRIVE_STATUS_FOLDER_ID", "").strip()
 
 def _drive_config_status():
     missing = []
-    if not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
-        missing.append("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip() and not oauth_write_configured():
+        missing.append("GOOGLE_SERVICE_ACCOUNT_JSON or Google OAuth credentials")
     if not INBOX_FOLDER_ID:
         missing.append("GOOGLE_DRIVE_INBOX_FOLDER_ID")
     if not EVIDENCE_FOLDER_ID:
@@ -60,14 +63,25 @@ def _drive_config_status():
     return missing
 
 
+def _template_kwargs(**kwargs):
+    base = {
+        "drive_missing": _drive_config_status(),
+        "drive_auth_mode": drive_auth_mode(),
+        "drive_write_ready": oauth_write_configured(),
+    }
+    base.update(kwargs)
+    return base
+
+
 def _render_index(otp_sent=False, message=None, error=None, status_code=200):
     return (
         render_template(
             "index_v6.html",
-            otp_sent=otp_sent,
-            message=message,
-            error=error,
-            drive_missing=_drive_config_status(),
+            **_template_kwargs(
+                otp_sent=otp_sent,
+                message=message,
+                error=error,
+            ),
         ),
         status_code,
     )
@@ -77,8 +91,7 @@ def home_v6():
     legacy.cleanup_jobs()
     return render_template(
         "index_v6.html",
-        otp_sent=False,
-        drive_missing=_drive_config_status(),
+        **_template_kwargs(otp_sent=False),
     )
 
 
@@ -90,9 +103,10 @@ def send_otp_route_v6():
         response = make_response(
             render_template(
                 "index_v6.html",
-                otp_sent=True,
-                message="OTP sent. Password accepted for this session.",
-                drive_missing=_drive_config_status(),
+                **_template_kwargs(
+                    otp_sent=True,
+                    message="OTP sent. Password accepted for this session.",
+                ),
             )
         )
         response.set_cookie(
@@ -114,7 +128,6 @@ def send_otp_route_v6():
 
 
 def resend_otp_route_v6():
-    """Send a new OTP without asking for the collector password again."""
     try:
         legacy.cleanup_states()
         state_id = request.cookies.get("de_state", "")
@@ -150,9 +163,10 @@ def resend_otp_route_v6():
         page = make_response(
             render_template(
                 "index_v6.html",
-                otp_sent=True,
-                message="Fresh Definedge OTP sent. Use the newest OTP only.",
-                drive_missing=_drive_config_status(),
+                **_template_kwargs(
+                    otp_sent=True,
+                    message="Fresh Definedge OTP sent. Use the newest OTP only.",
+                ),
             )
         )
         page.set_cookie(
@@ -174,12 +188,7 @@ def resend_otp_route_v6():
 
 
 def authenticate_v6(state_id, otp):
-    """Definedge login step 2 matching the current official pyintegrate client.
-
-    Official flow:
-      ac = sha256(otp_token + otp + api_secret)
-      POST JSON {"otp_token": ..., "otp": ..., "ac": ...}
-    """
+    """Definedge login step 2 matching the official pyintegrate client."""
     legacy.cleanup_states()
     state = legacy.OTP_STATES.get(state_id)
     if not state or not state.get("password_verified"):
@@ -300,13 +309,41 @@ def job_worker_v6(
             message="Evidence reconstructed. Publishing package to Trading Brain Drive...",
         )
 
-        uploaded, manifest = publish_package(
-            output_path,
-            EVIDENCE_FOLDER_ID,
-            STATUS_FOLDER_ID or None,
-            source_meta=source_meta or {},
-            job_summary=job.get("summary", {}),
-        )
+        try:
+            uploaded, manifest = publish_package(
+                output_path,
+                EVIDENCE_FOLDER_ID,
+                STATUS_FOLDER_ID or None,
+                source_meta=source_meta or {},
+                job_summary=job.get("summary", {}),
+            )
+        except Exception as publish_exc:
+            with legacy.JOB_LOCK:
+                latest_job = dict(legacy.JOBS.get(job_id, {}))
+            summary = dict(latest_job.get("summary", {}))
+            summary.update(
+                {
+                    "pipeline_version": "6.2",
+                    "reconstruction_engine": "V5 frozen",
+                    "ready_for_trading_brain": False,
+                    "local_evidence_ready": True,
+                    "drive_auth_mode": drive_auth_mode(),
+                    "drive_publish_error": str(publish_exc),
+                }
+            )
+            legacy.set_job(
+                job_id,
+                status="error",
+                progress=100,
+                message=(
+                    "Evidence package is complete, but Drive publication failed: "
+                    f"{publish_exc} Download Evidence ZIP below; Definedge collection does not need to be rerun."
+                ),
+                summary=summary,
+                output_path=output_path,
+                output_filename=Path(output_path).name,
+            )
+            return
 
         with legacy.JOB_LOCK:
             latest_job = dict(legacy.JOBS.get(job_id, {}))
@@ -317,9 +354,11 @@ def job_worker_v6(
                 "drive_file_id": uploaded.get("id", ""),
                 "drive_file_name": uploaded.get("name", ""),
                 "drive_file_url": uploaded.get("webViewLink", ""),
-                "pipeline_version": "6.1.2",
+                "pipeline_version": "6.2",
                 "reconstruction_engine": "V5 frozen",
                 "ready_for_trading_brain": True,
+                "local_evidence_ready": True,
+                "drive_auth_mode": drive_auth_mode(),
                 "manifest_status": manifest.get("status", ""),
             }
         )
@@ -383,8 +422,9 @@ def collect_route_v6():
                 "output_path": "",
                 "output_filename": "",
                 "summary": {
-                    "pipeline_version": "6.1.2",
+                    "pipeline_version": "6.2",
                     "ready_for_trading_brain": False,
+                    "drive_auth_mode": drive_auth_mode(),
                 },
             }
 
@@ -436,26 +476,43 @@ def status_route_v6(job_id):
             )
         snapshot = dict(job)
 
-    summary = dict(snapshot.get("summary", {}))
-    status = snapshot.get("status", "missing")
-    progress = snapshot.get("progress", 0)
-    message = snapshot.get("message", "")
-
-    if status == "done" and not summary.get("ready_for_trading_brain"):
-        status = "running"
-        progress = min(96, progress or 96)
-        message = "Evidence reconstructed. Preparing Drive publication..."
+    output_path = snapshot.get("output_path")
+    download_ready = bool(output_path and Path(output_path).exists())
 
     return jsonify(
         {
-            "status": status,
-            "progress": progress,
-            "message": message,
-            "summary": summary,
-            "download_ready": (
-                status == "done" and bool(snapshot.get("output_path"))
-            ),
+            "status": snapshot.get("status", "missing"),
+            "progress": snapshot.get("progress", 0),
+            "message": snapshot.get("message", ""),
+            "summary": dict(snapshot.get("summary", {})),
+            "download_ready": download_ready,
         }
+    )
+
+
+def download_route_v6(job_id):
+    legacy.cleanup_jobs()
+
+    with legacy.JOB_LOCK:
+        job = legacy.JOBS.get(job_id)
+        if not job:
+            return "Job expired.", 404
+        output_path = job.get("output_path")
+        output_filename = job.get("output_filename") or "Definedge_Evidence_V6.zip"
+
+    if not output_path:
+        return "Output file unavailable.", 404
+
+    path = Path(output_path)
+    if not path.exists():
+        return "Output file expired.", 404
+
+    return send_file(
+        path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=output_filename,
+        max_age=0,
     )
 
 
@@ -463,21 +520,22 @@ def health_v6():
     missing = _drive_config_status()
     return {
         "status": "ok" if not missing else "configuration_incomplete",
-        "version": "6.1.2",
+        "version": "6.2",
         "reconstruction_engine": "V5 frozen",
         "drive_configured": not bool(missing),
+        "drive_auth_mode": drive_auth_mode(),
+        "drive_oauth_write_ready": oauth_write_configured(),
         "missing_configuration": missing,
     }
 
 
-# V6 owns every user-visible route. V5 is engine-only.
 app.view_functions["home"] = home_v6
 app.view_functions["send_otp_route"] = send_otp_route_v6
 app.view_functions["collect_route"] = collect_route_v6
 app.view_functions["status_route"] = status_route_v6
+app.view_functions["download_route"] = download_route_v6
 app.view_functions["health"] = health_v6
 
-# V6-only retry route.
 if "resend_otp_v6" not in app.view_functions:
     app.add_url_rule(
         "/resend-otp",
