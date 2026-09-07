@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge Momentum Collector V6</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:880px;margin:40px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+h1{margin-top:0}.muted{color:#5c6675;line-height:1.55}.ok,.err,.info{padding:13px 15px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}.info{background:#eef5ff}
+button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer}
+input[type=password],input[type=number]{padding:10px;margin:5px 0 14px;max-width:100%}
+.section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
+.row{display:flex;gap:18px;flex-wrap:wrap}.small{font-size:13px;color:#687284;line-height:1.55}
+label{font-weight:600}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Definedge Momentum Collector V6</h1>
+<p class="muted">V6 keeps the proven V5 reconstruction engine but removes the manual analysis download/upload step. It reads the latest AlgoStra ZIP from the Trading Brain Drive inbox, fetches Definedge market data after OTP authentication, builds the complete V5 package, and publishes the result back to the Daily Evidence folder with a machine-readable manifest.</p>
+
+<div class="info"><b>Your daily action:</b> authenticate here when Definedge requires OTP. Do not put API secrets, passwords or OTPs in Google Drive. The Drive inbox is for AlgoStra source ZIPs only.</div>
+
+{% if drive_missing %}<div class="err"><b>One-time V6 setup incomplete:</b> {{ drive_missing|join(', ') }}</div>{% endif %}
+{% if message %}<div class="ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+{% if not otp_sent %}
+<div class="section">
+<form method="post" action="/send-otp">
+<label>Collector password</label><br>
+<input type="password" name="collector_password" required><br>
+<button type="submit">1. Send Definedge OTP</button>
+</form>
+</div>
+{% endif %}
+
+{% if otp_sent %}
+<div class="section">
+<form method="post" action="/collect">
+<label>2. Definedge OTP</label><br>
+<input type="password" name="otp" inputmode="numeric" autocomplete="one-time-code" required><br>
+
+<div class="row">
+<div><label>Minutes before each entry</label><br><input type="number" name="before_min" value="3" min="0" max="60"></div>
+<div><label>Minutes after each exit</label><br><input type="number" name="after_min" value="15" min="0" max="180"></div>
+</div>
+<label><input type="checkbox" name="include_chain" value="yes" checked> Collect ATM-1 / ATM / ATM+1 CE and PE chain paths</label><br><br>
+<button type="submit">3. Authenticate + Run Full Evidence Pipeline</button>
+</form>
+</div>
+{% endif %}
+
+<div class="section small"><b>Automation path:</b> Drive AlgoStra Inbox → Definedge OTP → V5 tick/chain reconstruction → MFE/MAE/duplicate/strategy analysis → Drive Daily Evidence + status manifest → Trading Brain review.</div>
+</div>
+</body>
+</html>
