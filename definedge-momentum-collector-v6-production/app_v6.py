@@ -18,15 +18,13 @@ LEGACY_APP_PATH = (
     / "app.py"
 )
 
-# Production-only modules must resolve from this clean folder first.
+# Production-only modules resolve from this clean V6 folder first.
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from drive_bridge import latest_zip_from_folder, publish_package
 
-
-# Load the proven V5 reconstruction engine under a private module name.
-# It remains frozen as the market-data/parser engine; V6 owns all web routes.
+# Load V5 only as the frozen reconstruction/data engine.
 if not LEGACY_APP_PATH.exists():
     raise RuntimeError(f"Frozen V5 engine not found: {LEGACY_APP_PATH}")
 
@@ -105,6 +103,73 @@ def send_otp_route_v6():
         )
 
 
+def authenticate_v6(state_id, otp):
+    """Definedge login step 2 using the complete JSON payload.
+
+    The current signin endpoint consumes application/json. The previous V5
+    compatibility path first sent only otp_token+otp as JSON and then retried
+    as form data. That produced 400 followed by RESTEasy 415. V6 sends the
+    documented client/grant/secret/OTP fields together as JSON in one request.
+    """
+    legacy.cleanup_states()
+    state = legacy.OTP_STATES.get(state_id)
+    if not state or not state.get("password_verified"):
+        raise RuntimeError("OTP session expired. Click Send Definedge OTP again.")
+
+    otp_code = str(otp or "").strip()
+    if not otp_code:
+        raise RuntimeError("Enter the Definedge OTP.")
+
+    payload = {
+        "client_id": "TRTP",
+        "grant_type": "password",
+        "client_secret": legacy.API_SECRET,
+        "otp_token": state["otp_token"],
+        "otp": otp_code,
+    }
+
+    response = legacy.HTTP.post(
+        legacy.TOKEN_URL,
+        json=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+
+    if not response.ok:
+        detail = response.text[:500]
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                detail = (
+                    body.get("error_description")
+                    or body.get("message")
+                    or body.get("error")
+                    or detail
+                )
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Definedge OTP authentication failed ({response.status_code}): {detail}"
+        )
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise RuntimeError("Definedge authentication returned a non-JSON response.") from exc
+
+    session_key = legacy.extract_session_key(data)
+    if not session_key:
+        raise RuntimeError(
+            "Definedge authentication succeeded but no usable api_session_key was returned."
+        )
+
+    legacy.OTP_STATES.pop(state_id, None)
+    return session_key
+
+
 def job_worker_v6(
     job_id,
     session_key,
@@ -135,7 +200,6 @@ def job_worker_v6(
                 "Reconstruction completed but no evidence ZIP was produced."
             )
 
-        # Keep V5 internal as the frozen engine, but expose a V6 evidence package.
         source_path = Path(output_path)
         v6_name = source_path.name.replace(
             "Momentum_Full_Analysis_V5",
@@ -175,7 +239,7 @@ def job_worker_v6(
                 "drive_file_id": uploaded.get("id", ""),
                 "drive_file_name": uploaded.get("name", ""),
                 "drive_file_url": uploaded.get("webViewLink", ""),
-                "pipeline_version": "6.1",
+                "pipeline_version": "6.1.1",
                 "reconstruction_engine": "V5 frozen",
                 "ready_for_trading_brain": True,
                 "manifest_status": manifest.get("status", ""),
@@ -229,7 +293,7 @@ def collect_route_v6():
         )
         include_chain = request.form.get("include_chain") == "yes"
 
-        session_key = legacy.authenticate(state_id, otp)
+        session_key = authenticate_v6(state_id, otp)
         job_id = secrets.token_urlsafe(18)
 
         with legacy.JOB_LOCK:
@@ -241,7 +305,7 @@ def collect_route_v6():
                 "output_path": "",
                 "output_filename": "",
                 "summary": {
-                    "pipeline_version": "6.1",
+                    "pipeline_version": "6.1.1",
                     "ready_for_trading_brain": False,
                 },
             }
@@ -269,7 +333,6 @@ def collect_route_v6():
         return response
 
     except Exception as exc:
-        # Expected operational/input problems should not masquerade as a server crash.
         return (
             render_template(
                 "index_v6.html",
@@ -304,8 +367,6 @@ def status_route_v6(job_id):
     progress = snapshot.get("progress", 0)
     message = snapshot.get("message", "")
 
-    # The frozen V5 engine marks reconstruction done before V6 publishes to Drive.
-    # Never expose that intermediate state as final V6 completion.
     if status == "done" and not summary.get("ready_for_trading_brain"):
         status = "running"
         progress = min(96, progress or 96)
@@ -328,14 +389,14 @@ def health_v6():
     missing = _drive_config_status()
     return {
         "status": "ok" if not missing else "configuration_incomplete",
-        "version": "6.1",
+        "version": "6.1.1",
         "reconstruction_engine": "V5 frozen",
         "drive_configured": not bool(missing),
         "missing_configuration": missing,
     }
 
 
-# V6 owns every user-visible route. The V5 module is engine-only.
+# V6 owns every user-visible route. V5 is engine-only.
 app.view_functions["home"] = home_v6
 app.view_functions["send_otp_route"] = send_otp_route_v6
 app.view_functions["collect_route"] = collect_route_v6
