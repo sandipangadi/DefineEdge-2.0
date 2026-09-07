@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Definedge V6 Evidence Pipeline</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:780px;margin:50px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+.badge{display:inline-block;background:#172033;color:#fff;padding:5px 9px;border-radius:999px;font-size:12px;margin-bottom:10px}
+.bar{height:18px;background:#e7eaf0;border-radius:9px;overflow:hidden}.fill{height:100%;width:0;background:#5c6f91;transition:width .4s}
+.msg{margin-top:16px;line-height:1.5}.actions{display:none;margin-top:20px;gap:10px;flex-wrap:wrap}
+a.btn{display:inline-block;padding:12px 18px;border-radius:9px;background:#172033;color:#fff;text-decoration:none}
+a.alt{background:#5c6675}.err{color:#a32222}.small{font-size:13px;color:#687284;margin-top:18px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="badge">PRODUCTION V6.1</div>
+<h1>Building Trading Brain evidence package…</h1>
+<div class="bar"><div id="fill" class="fill"></div></div>
+<div id="pct" class="msg">Starting…</div>
+<div id="message" class="msg"></div>
+<div id="actions" class="actions">
+<a id="drive" class="btn" href="#" target="_blank" rel="noopener">Open Evidence ZIP in Drive</a>
+<a class="btn alt" href="/download/{{ job_id }}">Emergency Download</a>
+</div>
+<div class="small">Keep this page open while collection runs. V6 is complete only after the evidence ZIP has been published back to Drive.</div>
+</div>
+<script>
+const jobId = "{{ job_id }}";
+async function poll(){
+  try{
+    const r = await fetch(`/status/${jobId}`, {cache:"no-store"});
+    const d = await r.json();
+    document.getElementById("fill").style.width = `${d.progress || 0}%`;
+    document.getElementById("pct").textContent = `${d.progress || 0}%`;
+    document.getElementById("message").textContent = d.message || "";
+    if(d.status === "done"){
+      const actions = document.getElementById("actions");
+      const drive = document.getElementById("drive");
+      const url = d.summary && d.summary.drive_file_url;
+      if(url){ drive.href = url; drive.style.display = "inline-block"; }
+      else { drive.style.display = "none"; }
+      actions.style.display = "flex";
+      return;
+    }
+    if(d.status === "error" || d.status === "missing"){
+      document.getElementById("message").classList.add("err");
+      return;
+    }
+    setTimeout(poll, 1800);
+  }catch(e){
+    document.getElementById("message").textContent = "Waiting for service…";
+    setTimeout(poll, 3000);
+  }
+}
+poll();
+</script>
+</body>
+</html>
