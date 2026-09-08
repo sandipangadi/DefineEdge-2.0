@@ -10,6 +10,8 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
+from activity_log_repair import repair_activity_log_mapping
+
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 IST = ZoneInfo("Asia/Kolkata")
@@ -77,16 +79,12 @@ def _service(credentials):
 
 
 def _read_service():
-    # Preserve the proven shared-folder ingestion path. The service account can
-    # read files shared with it even though it cannot own new My Drive uploads.
     if os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
         return _service(_service_account_credentials())
     return _service(_user_credentials())
 
 
 def _write_service():
-    # My Drive uploads must be owned by the user's Google account, so writes use
-    # OAuth refresh-token credentials rather than the quota-less service account.
     return _service(_user_credentials())
 
 
@@ -105,11 +103,7 @@ def latest_zip_from_folder(folder_id):
     ).execute()
 
     visible_files = result.get("files", [])
-    candidates = [
-        item
-        for item in visible_files
-        if item.get("name", "").lower().endswith(".zip")
-    ]
+    candidates = [item for item in visible_files if item.get("name", "").lower().endswith(".zip")]
 
     if not candidates:
         visible_names = [item.get("name", "") for item in visible_files[:10]]
@@ -118,10 +112,7 @@ def latest_zip_from_folder(folder_id):
             if visible_names
             else " The configured Drive identity sees no files in that folder."
         )
-        raise RuntimeError(
-            "No AlgoStra ZIP found in the configured Google Drive inbox."
-            + detail
-        )
+        raise RuntimeError("No AlgoStra ZIP found in the configured Google Drive inbox." + detail)
 
     src = candidates[0]
     buf = io.BytesIO()
@@ -175,6 +166,10 @@ def publish_package(
     if not evidence_parent_id:
         raise RuntimeError("Missing GOOGLE_DRIVE_EVIDENCE_FOLDER_ID.")
 
+    # V6.3 analysis repair runs before any Drive action. This means the local
+    # downloadable Evidence ZIP is corrected even when Google OAuth later fails.
+    repair_audit = repair_activity_log_mapping(zip_path)
+
     service = _write_service()
     now_ist = datetime.now(IST)
     day = now_ist.date().isoformat()
@@ -193,20 +188,17 @@ def publish_package(
     ).execute()
 
     manifest = {
-        "pipeline_version": "6.2",
+        "pipeline_version": "6.3",
         "created_at_ist": now_ist.isoformat(),
         "drive_auth_mode": "user_oauth",
         "source": source_meta or {},
         "analysis_package": uploaded,
         "job_summary": job_summary or {},
+        "activity_log_repair": repair_audit,
         "status": "ready_for_trading_brain",
     }
 
-    manifest_bytes = json.dumps(
-        manifest,
-        indent=2,
-        ensure_ascii=False,
-    ).encode("utf-8")
+    manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
     manifest_name = path.stem + "_manifest.json"
     target_parent = status_parent_id or day_folder_id
 
