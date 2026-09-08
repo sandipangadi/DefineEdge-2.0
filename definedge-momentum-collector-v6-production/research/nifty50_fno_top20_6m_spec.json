@@ -1,0 +1,36 @@
+{
+  "study_id": "NIFTY50_FNO_TOP20_6M_REGIME_V1",
+  "purpose": "Six-month historical analogy for option momentum admission, strike response and regime dependence.",
+  "universe": {
+    "parent": "NIFTY 50 constituents",
+    "eligibility": "NSE stock F&O/options eligible",
+    "selection_count": 20,
+    "selection_rule": "Rank eligible NIFTY50 symbols by option tradability using volume, open interest, bid-ask spread, trading frequency and underlying liquidity; freeze selected 20 for V1 study.",
+    "anti_bias": "Store ranking inputs and selection date before outcome analysis. Do not select symbols using six-month profitability."
+  },
+  "window": {
+    "length_months": 6,
+    "bar": "1 minute",
+    "discovery_fraction": 0.67,
+    "validation_fraction": 0.33,
+    "validation_rule": "Chronological holdout; no weight fitting on validation period."
+  },
+  "structure": {
+    "chart": "Point & Figure",
+    "box_size_percent": 0.25,
+    "reversal": 3,
+    "price_type": "Close Only",
+    "signals": ["Affordable Probable Breakout", "Double Top Buy", "Double Bottom Sell", "D-Smart 6-period", "Relative Strength"]
+  },
+  "options": {
+    "expiry": "1st Monthly",
+    "strikes": ["ATM-1", "ATM", "ATM+1"],
+    "directions": ["CE", "PE"],
+    "features": ["premium_return", "premium_velocity", "premium_acceleration", "MFE", "MAE", "bid_ask_spread", "volume", "open_interest", "oi_change", "strike_efficiency"]
+  },
+  "regime_features": ["index_direction", "trend_strength", "realized_volatility", "breadth", "time_of_day", "days_to_expiry", "bull_bear_side"],
+  "targets": ["MFE_threshold_probability", "MAE", "expectancy", "profit_factor", "MFE_to_exit_giveback", "holding_time"],
+  "model": "Q = beta0 + beta_pnf*PNF + beta_dsm*DSM + beta_rs*RS + beta_fast*FAST + beta_opt*OPTION_MOMENTUM + beta_liq*LIQUIDITY + beta_reg*REGIME + beta_time*TIME",
+  "primary_question": "Which combination predicts sustained option MFE, and how does that relationship change by regime?",
+  "integrity": ["Bull and Bear modeled separately before pooled analysis", "Entry quality and exit efficiency evaluated separately", "No hindsight symbol selection", "No live order placement", "No promotion from one-day evidence"]
+}
