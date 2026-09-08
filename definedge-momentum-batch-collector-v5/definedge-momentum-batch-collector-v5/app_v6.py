@@ -8,6 +8,7 @@ proven reconstruction engine and Render currently starts from this path.
 """
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -35,6 +36,117 @@ sys.modules["definedge_v6_production"] = production
 spec.loader.exec_module(production)
 
 app = production.app
+
+# V7 research wrapper: preserve the proven V6/V5 evidence engine, then reuse the
+# same authenticated Definedge session for a six-month NIFTY50 F&O Top20 study.
+# A research failure never destroys the completed daily evidence package.
+from historical_top20_research import run_six_month_top20
+
+_ORIGINAL_JOB_WORKER_V6 = production.job_worker_v6
+
+
+def _job_snapshot(job_id):
+    with production.legacy.JOB_LOCK:
+        return dict(production.legacy.JOBS.get(job_id, {}))
+
+
+def job_worker_v6_with_top20_research(
+    job_id,
+    session_key,
+    input_bytes,
+    input_filename,
+    before_minutes,
+    after_minutes,
+    include_chain,
+    source_meta=None,
+):
+    _ORIGINAL_JOB_WORKER_V6(
+        job_id=job_id,
+        session_key=session_key,
+        input_bytes=input_bytes,
+        input_filename=input_filename,
+        before_minutes=before_minutes,
+        after_minutes=after_minutes,
+        include_chain=include_chain,
+        source_meta=source_meta,
+    )
+
+    if os.getenv("TOP20_SIX_MONTH_RESEARCH_ENABLED", "1").strip().lower() in {"0", "false", "no"}:
+        return
+
+    snapshot = _job_snapshot(job_id)
+    if snapshot.get("status") != "done":
+        return
+
+    try:
+        production.legacy.set_job(
+            job_id,
+            status="running",
+            progress=99,
+            message="Daily evidence published. Running automated six-month NIFTY50 F&O Top20 regime research...",
+        )
+        days = max(120, min(190, int(os.getenv("TOP20_RESEARCH_DAYS", "183"))))
+        research_zip, research_summary = run_six_month_top20(session_key, days=days)
+
+        uploaded, _manifest = production.publish_package(
+            str(research_zip),
+            production.EVIDENCE_FOLDER_ID,
+            production.STATUS_FOLDER_ID or None,
+            source_meta={
+                "type": "nifty50_fno_top20_six_month_research",
+                "trigger": "automatic_after_v6_evidence",
+                "source_algostra_zip": (source_meta or {}).get("name", ""),
+            },
+            job_summary={
+                "research_version": research_summary.get("research_version"),
+                "top20": research_summary.get("top20", []),
+                "validation": research_summary.get("validation", {}),
+                "limitations": research_summary.get("limitations", []),
+            },
+        )
+
+        latest = _job_snapshot(job_id)
+        summary = dict(latest.get("summary", {}))
+        summary.update({
+            "top20_six_month_research": "completed",
+            "top20_research_version": research_summary.get("research_version", ""),
+            "top20_symbols": research_summary.get("top20", []),
+            "top20_validation": research_summary.get("validation", {}),
+            "top20_formula_features": research_summary.get("formula_features", {}),
+            "top20_research_drive_file_id": uploaded.get("id", ""),
+            "top20_research_drive_file_name": uploaded.get("name", ""),
+            "top20_research_drive_file_url": uploaded.get("webViewLink", ""),
+        })
+        production.legacy.set_job(
+            job_id,
+            status="done",
+            progress=100,
+            message="Completed: daily evidence + six-month NIFTY50 F&O Top20 regime research published to Trading Brain Drive.",
+            summary=summary,
+        )
+    except Exception as exc:
+        latest = _job_snapshot(job_id)
+        summary = dict(latest.get("summary", {}))
+        summary.update({
+            "top20_six_month_research": "error",
+            "top20_research_error": str(exc),
+        })
+        production.legacy.set_job(
+            job_id,
+            status="done",
+            progress=100,
+            message=(
+                "Daily evidence completed and published. Six-month Top20 research did not complete: "
+                f"{exc}"
+            ),
+            summary=summary,
+        )
+
+
+# collect_route_v6 resolves job_worker_v6 from its production-module globals at run
+# time, so replacing it here upgrades the existing Render flow without rewriting
+# the frozen V5 reconstruction engine or the production V6 routes.
+production.job_worker_v6 = job_worker_v6_with_top20_research
 
 
 def privacy_policy_v6():
