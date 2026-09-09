@@ -16,6 +16,7 @@ LEGACY_APP_PATH = REPO_ROOT / "definedge-momentum-batch-collector-v5" / "defined
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 from drive_bridge import drive_auth_mode, oauth_write_configured, publish_package
+from input_zip_validation import validate_and_sanitize_algostra_zip
 if not LEGACY_APP_PATH.exists():
     raise RuntimeError(f"Frozen V5 engine not found: {LEGACY_APP_PATH}")
 spec = importlib.util.spec_from_file_location("definedge_v5_engine", LEGACY_APP_PATH)
@@ -154,19 +155,47 @@ def collect_route_v6():
         input_bytes = uploaded.read()
         if not input_bytes:
             raise RuntimeError("Uploaded AlgoStra ZIP is empty.")
+
         test_zf, _ = legacy.safe_zip_input(input_bytes)
-        csv_names = [n for n in test_zf.namelist() if n.lower().endswith(".csv") and not n.endswith("/")]
-        test_zf.close()
-        if len(csv_names) != 24:
-            raise RuntimeError(f"Expected today's 24 AlgoStra CSVs (12 Positions + 12 Activity Logs); found {len(csv_names)} CSV files. Nothing was sent to Definedge.")
+        try:
+            input_bytes, input_audit = validate_and_sanitize_algostra_zip(test_zf)
+        finally:
+            test_zf.close()
+
         before_minutes = max(0, min(60, int(request.form.get("before_min", "3"))))
         after_minutes = max(0, min(180, int(request.form.get("after_min", "15"))))
         include_chain = request.form.get("include_chain") == "yes"
         session_key = authenticate_v6(state_id, otp)
         job_id = secrets.token_urlsafe(18)
-        source_meta = {"name": uploaded.filename, "source": "manual_upload_v6.3", "csv_count": 24}
+        source_meta = {
+            "name": uploaded.filename,
+            "source": "manual_upload_v6.3_dynamic",
+            "csv_count_original": input_audit["csv_count_original"],
+            "csv_count_sanitized": input_audit["csv_count_sanitized"],
+            "input_audit": input_audit,
+        }
         with legacy.JOB_LOCK:
-            legacy.JOBS[job_id] = {"created": time.time(), "status": "queued", "progress": 1, "message": f"Starting V6.3 from uploaded ZIP: {uploaded.filename} (24 CSVs verified)...", "output_path": "", "output_filename": "", "summary": {"pipeline_version": "6.3", "ready_for_trading_brain": False, "drive_auth_mode": drive_auth_mode(), "source_input": uploaded.filename, "source_csv_count": 24}}
+            legacy.JOBS[job_id] = {
+                "created": time.time(),
+                "status": "queued",
+                "progress": 1,
+                "message": (
+                    f"Starting V6.3 from uploaded ZIP: {uploaded.filename} "
+                    f"({input_audit['csv_count_sanitized']} unique AlgoStra CSVs verified; "
+                    f"{input_audit['duplicate_csv_count_removed']} exact duplicate(s) removed)..."
+                ),
+                "output_path": "",
+                "output_filename": "",
+                "summary": {
+                    "pipeline_version": "6.3",
+                    "ready_for_trading_brain": False,
+                    "drive_auth_mode": drive_auth_mode(),
+                    "source_input": uploaded.filename,
+                    "source_csv_count_original": input_audit["csv_count_original"],
+                    "source_csv_count_sanitized": input_audit["csv_count_sanitized"],
+                    "source_input_audit": input_audit,
+                },
+            }
         threading.Thread(target=job_worker_v6, kwargs={"job_id": job_id, "session_key": session_key, "input_bytes": input_bytes, "input_filename": uploaded.filename, "before_minutes": before_minutes, "after_minutes": after_minutes, "include_chain": include_chain, "source_meta": source_meta}, daemon=True).start()
         response = make_response(render_template("job_v6.html", job_id=job_id))
         response.delete_cookie("de_state")
@@ -201,7 +230,7 @@ def download_route_v6(job_id):
 
 def health_v6():
     missing = _drive_config_status()
-    return {"status": "ok" if not missing else "configuration_incomplete", "version": "6.3", "reconstruction_engine": "V5 frozen", "input_mode": "explicit_manual_zip", "drive_configured": not bool(missing), "drive_auth_mode": drive_auth_mode(), "drive_oauth_write_ready": oauth_write_configured(), "missing_configuration": missing}
+    return {"status": "ok" if not missing else "configuration_incomplete", "version": "6.3", "reconstruction_engine": "V5 frozen", "input_mode": "explicit_manual_zip_dynamic", "drive_configured": not bool(missing), "drive_auth_mode": drive_auth_mode(), "drive_oauth_write_ready": oauth_write_configured(), "missing_configuration": missing}
 
 app.view_functions["home"] = home_v6
 app.view_functions["send_otp_route"] = send_otp_route_v6
