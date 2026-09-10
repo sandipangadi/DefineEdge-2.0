@@ -8,6 +8,11 @@ ecosystem conditions and existing MFE/MAE/giveback metrics.
 Pattern entries are hypotheses/conditions to test, not claims that a condition
 occurred. A pattern is only marked observed when market data and a documented or
 platform-native definition support it.
+
+VWAP and ATR are added only as contextual overlays. They are not trading filters,
+entry conditions, or exit rules in the frozen strategies. Their purpose is to
+measure location relative to session value (VWAP) and movement relative to
+prevailing volatility (ATR) around P&F setup, entry, MFE, deterioration and exit.
 """
 
 from __future__ import annotations
@@ -39,6 +44,9 @@ PATTERN_REGISTRY = [
     {"id": "DTDB_BEAR", "label": "DTDB bearish momentum state", "role": "bearish_momentum_context", "family": "dtdb", "detection_policy": "formula_must_be_verified"},
     {"id": "CAM_H3", "label": "Price above Camarilla H3", "role": "strategy_threshold_context", "family": "camarilla"},
     {"id": "CAM_L3", "label": "Price below Camarilla L3", "role": "strategy_threshold_context", "family": "camarilla"},
+    {"id": "VWAP_SESSION", "label": "Session VWAP location", "role": "independent_context_overlay", "family": "vwap", "detection_policy": "calculate_from_intraday_price_volume_when_volume_available"},
+    {"id": "VWAP_ANCHORED", "label": "Anchored VWAP location", "role": "research_context_overlay", "family": "vwap", "detection_policy": "anchor_must_be_explicit_and_frozen_before_scoring"},
+    {"id": "ATR", "label": "Average True Range volatility context", "role": "independent_volatility_overlay", "family": "atr", "detection_policy": "record_period_and_timeframe_explicitly; do_not_treat_as_directional_signal"},
 ]
 
 
@@ -54,7 +62,7 @@ def _find_metric_rows(zf: zipfile.ZipFile):
 
     Retrospective test on the 09-Sep V6 package showed the old substring-based
     header check also admitted strategy_comparison.csv because
-    avg_peak_to_exit_giveback_pct contains peak_to_exit_giveback_pct.  Require
+    avg_peak_to_exit_giveback_pct contains peak_to_exit_giveback_pct. Require
     trade identity columns plus exact metric columns instead.
     """
     rows = []
@@ -135,6 +143,8 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
                 "entry": "Was genuine directional momentum present before/at entry, and how late was the executed entry versus the earliest documented qualifying setup/state?",
                 "exit": "When did momentum first materially deteriorate or reverse, and how late/early was the actual exit versus documented opposing/reversal conditions?",
                 "efficiency": "Use MFE, MAE, profit captured and peak-to-exit giveback as outcome measures, not as pattern definitions.",
+                "vwap": "Overlay session VWAP where valid volume data exists; record whether underlying/option was above, below, crossing, or extended from VWAP at setup, entry, MFE, deterioration and exit. Anchored VWAP is research-only unless its anchor is explicitly frozen.",
+                "atr": "Overlay ATR as volatility context; express entry distance, favorable excursion, adverse excursion and exit giveback in ATR units. ATR is not treated as a bullish/bearish trigger by itself.",
             },
             "candidate_patterns": [p["id"] for p in PATTERN_REGISTRY],
             "required_evidence": [
@@ -142,6 +152,8 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
                 "sufficient pre-entry P&F context using tested box/reversal/price-type settings",
                 "timestamped AlgoStra entry/exit/activity events",
                 "documented or platform-native definition before declaring a pattern match",
+                "volume field for VWAP calculation; otherwise VWAP status must remain unavailable",
+                "sufficient OHLC warm-up for the stated ATR period/timeframe",
             ],
             "status": "queued_for_evidence_correlation",
         })
@@ -154,16 +166,21 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
                 "scope": strategy.get("scope", ""),
                 "first_event_ist": strategy.get("first_event_ist", ""),
                 "last_event_ist": strategy.get("last_event_ist", ""),
-                "analysis_objective": "Determine whether meaningful momentum occurred during the eligible strategy window despite no trade; if yes, identify which documented P&F/indicator conditions appeared and which configured condition blocked entry.",
+                "analysis_objective": "Determine whether meaningful momentum occurred during the eligible strategy window despite no trade; if yes, identify which documented P&F/indicator conditions appeared, which configured condition blocked entry, and whether VWAP/ATR context distinguished the missed move from ordinary noise.",
                 "candidate_patterns": [p["id"] for p in PATTERN_REGISTRY],
                 "status": "queued_for_missed_momentum_review",
             })
 
     return {
-        "schema_version": "momentum-pattern-correlation-v1.1",
+        "schema_version": "momentum-pattern-correlation-v1.2",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "scope": "stock_options_and_index_options",
         "principle": "Judge whether entries coincide with genuine momentum and exits coincide with deterioration/reversal; do not optimise rules from isolated trades.",
+        "overlay_policy": {
+            "vwap": "context_only; session VWAP requires price+volume; anchored VWAP requires an explicit frozen anchor before comparative scoring",
+            "atr": "context_only; period and timeframe must be explicit; use ATR units for movement/risk normalisation, not direction prediction",
+            "frozen_strategy_impact": "none",
+        },
         "pattern_registry": PATTERN_REGISTRY,
         "metric_source_files": metric_sources,
         "chart_source_inventory": chart_sources,
@@ -177,10 +194,15 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
             "mfe_time", "mfe_pct", "mae_pct", "momentum_deterioration_time",
             "first_opposing_pattern_time", "actual_exit_time", "exit_delay_minutes_or_boxes",
             "peak_to_exit_giveback_pct", "available_profit_captured_pct",
+            "session_vwap_at_setup", "session_vwap_at_entry", "price_vs_vwap_at_entry_pct",
+            "vwap_cross_after_entry_time", "session_vwap_at_mfe", "session_vwap_at_deterioration",
+            "session_vwap_at_exit", "price_vs_vwap_at_exit_pct", "anchored_vwap_reference",
+            "atr_period", "atr_timeframe", "atr_at_entry", "entry_extension_atr",
+            "mfe_atr", "mae_atr", "giveback_atr", "atr_at_exit",
             "post_exit_continuation_or_reversal", "entry_quality_class", "exit_quality_class",
             "evidence_grade", "doc_definition_reference",
         ],
-        "quality_rule": "A pattern/indicator is marked observed only when reconstructed market data and a documented or platform-native definition both support it. Otherwise status remains unknown/not-computable.",
+        "quality_rule": "A pattern/indicator is marked observed only when reconstructed market data and a documented or platform-native definition both support it. VWAP/ATR remain contextual overlays and must be marked unavailable when required price/volume/OHLC data is insufficient.",
     }
 
 
