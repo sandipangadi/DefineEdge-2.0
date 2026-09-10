@@ -1,8 +1,9 @@
-"""V6-only all-options observation layer.
+"""V6-only all-options observation and compatibility layer.
 
-This module does NOT modify the frozen V5 reconstruction engine. It augments the
-V6 publication package so a daily AlgoStra bundle records every detected option
-strategy (stock + index), including activity-only/no-trade strategies.
+This module does NOT modify the frozen V5 reconstruction engine or its trading
+logic. It augments V6 publication and normalises AlgoStra export variations so
+all stock/index option strategies can be observed and passed to the frozen V5
+reconstruction parser consistently.
 """
 
 from __future__ import annotations
@@ -10,9 +11,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import threading
 import zipfile
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,135 @@ def _safe_iso(dt):
     return dt.isoformat() if dt else ""
 
 
+def _compact_contract_to_display(symbol_text: str) -> str:
+    """Normalise compact AlgoStra option symbols for the frozen V5 parser.
+
+    Some AlgoStra exports use ``TCS29SEP26P2200`` while others use
+    ``TCS 29-Sep-2026 PE 2200``.  V5 intentionally remains frozen and expects
+    the latter form.  This V6 input shim rewrites only the Symbol cell; no trade
+    values/timestamps/prices are changed.
+    """
+    text = str(symbol_text or "").strip()
+    if not text or re.search(r"\s\d{1,2}-[A-Za-z]{3}-\d{4}\s+(?:CE|PE)\s+", text, re.I):
+        return text
+
+    match = re.match(
+        r"^(.+?)(\d{2})([A-Za-z]{3})(\d{2})([CP])(\d+(?:\.\d+)?)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return text
+
+    underlying, day, month, year2, cp, strike = match.groups()
+    optiontype = "CE" if cp.upper() == "C" else "PE"
+    return f"{underlying} {day}-{month.title()}-20{year2} {optiontype} {strike}"
+
+
+def _normalise_positions_text(text: str):
+    """Return (normalised_text, changed_symbol_count) for a Positions CSV."""
+    lines = text.splitlines()
+    header_index = None
+    for index, line in enumerate(lines[:30]):
+        if (
+            "Entry Qty 1" in line
+            and "Entry Price 1" in line
+            and "Entry Time 1" in line
+            and "Order Status" in line
+        ):
+            header_index = index
+            break
+    if header_index is None:
+        return text, 0
+
+    prefix = lines[:header_index]
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
+    if not rows:
+        return text, 0
+
+    fieldnames = list(rows[0].keys())
+    if "Symbol" not in fieldnames:
+        return text, 0
+
+    changed = 0
+    for row in rows:
+        before = str(row.get("Symbol", "") or "")
+        after = _compact_contract_to_display(before)
+        if after != before:
+            row["Symbol"] = after
+            changed += 1
+
+    if not changed:
+        return text, 0
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    body = buf.getvalue().rstrip("\n")
+    return "\n".join(prefix + [body]), changed
+
+
+def normalise_input_for_legacy(legacy, input_bytes: bytes):
+    """V6-only compatibility normalisation; frozen V5 code remains untouched."""
+    source_zf, csv_names = legacy.safe_zip_input(input_bytes)
+    output = io.BytesIO()
+    changed_files = 0
+    changed_symbols = 0
+    try:
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as target:
+            for name in csv_names:
+                raw = source_zf.read(name)
+                text = raw.decode("utf-8-sig", errors="replace")
+                normalised, changed = _normalise_positions_text(text)
+                if changed:
+                    changed_files += 1
+                    changed_symbols += changed
+                    target.writestr(name, normalised.encode("utf-8-sig"))
+                else:
+                    target.writestr(name, raw)
+    finally:
+        source_zf.close()
+
+    return output.getvalue(), {
+        "v6_symbol_normalisation": True,
+        "normalised_position_files": changed_files,
+        "normalised_contract_symbols": changed_symbols,
+    }
+
+
+def _strategy_from_activity_text(text: str, fallback: str) -> str:
+    """Infer real strategy name from generic rebalance_logs filenames."""
+    patterns = (
+        r"Your\s+(.+?)\s+strategy\s+has\b",
+        r"RECEIVED:\s*,?\s*(.+?)\s*:\s*(?:PANDF|POINT|RENKO|CANDLE|OHLC)\b",
+    )
+    for line in text.splitlines():
+        for pattern in patterns:
+            match = re.search(pattern, line, flags=re.IGNORECASE)
+            if match:
+                value = match.group(1).strip(" ,:")
+                if value:
+                    return value
+    return fallback
+
+
+def _new_strategy_item(strategy_name: str):
+    return {
+        "strategy_name": strategy_name,
+        "scope": _strategy_bucket(strategy_name),
+        "position_trade_count": 0,
+        "activity_event_count": 0,
+        "entry_event_count": 0,
+        "exit_event_count": 0,
+        "first_event_ist": "",
+        "last_event_ist": "",
+        "underlyings": set(),
+        "option_sides": set(),
+        "source_files": set(),
+    }
+
+
 def build_manifest(legacy, input_bytes: bytes, input_filename: str) -> dict:
     zf, csv_names = legacy.safe_zip_input(input_bytes)
     strategies = {}
@@ -42,49 +172,34 @@ def build_manifest(legacy, input_bytes: bytes, input_filename: str) -> dict:
             if pos is not None:
                 strategy_name = pos.get("strategy_name") or Path(name).stem
                 key = legacy.normalized_strategy_name(strategy_name) or strategy_name
-                item = strategies.setdefault(key, {
-                    "strategy_name": strategy_name,
-                    "scope": _strategy_bucket(strategy_name),
-                    "position_trade_count": 0,
-                    "activity_event_count": 0,
-                    "entry_event_count": 0,
-                    "exit_event_count": 0,
-                    "first_event_ist": "",
-                    "last_event_ist": "",
-                    "underlyings": set(),
-                    "option_sides": set(),
-                    "source_files": set(),
-                })
+                item = strategies.setdefault(key, _new_strategy_item(strategy_name))
                 trades = pos.get("trades", [])
                 item["position_trade_count"] += len(trades)
                 item["source_files"].add(name)
                 for trade in trades:
-                    if trade.get("underlying"):
-                        item["underlyings"].add(str(trade["underlying"]).upper())
+                    underlying = str(trade.get("underlying", "") or "").upper()
+                    if underlying:
+                        item["underlyings"].add(underlying)
                     if trade.get("optiontype"):
                         item["option_sides"].add(str(trade["optiontype"]).upper())
-                    if str(trade.get("underlying", "")).upper() in INDEX_HINTS:
+                    if any(hint in underlying for hint in INDEX_HINTS):
                         item["scope"] = "index_options"
-                files.append({"filename": name, "detected_type": "positions", "strategy_name": strategy_name, "trade_rows": len(trades)})
+                files.append({
+                    "filename": name,
+                    "detected_type": "positions",
+                    "strategy_name": strategy_name,
+                    "trade_rows": len(trades),
+                })
                 continue
 
             activity = legacy.parse_activity_log(text, name)
             if activity is not None:
-                strategy_name = legacy.strategy_from_activity_filename(name)
+                fallback = legacy.strategy_from_activity_filename(name)
+                strategy_name = _strategy_from_activity_text(text, fallback)
                 key = legacy.normalized_strategy_name(strategy_name) or strategy_name
-                item = strategies.setdefault(key, {
-                    "strategy_name": strategy_name,
-                    "scope": _strategy_bucket(strategy_name),
-                    "position_trade_count": 0,
-                    "activity_event_count": 0,
-                    "entry_event_count": 0,
-                    "exit_event_count": 0,
-                    "first_event_ist": "",
-                    "last_event_ist": "",
-                    "underlyings": set(),
-                    "option_sides": set(),
-                    "source_files": set(),
-                })
+                item = strategies.setdefault(key, _new_strategy_item(strategy_name))
+                item["strategy_name"] = strategy_name
+                item["scope"] = _strategy_bucket(strategy_name)
                 item["source_files"].add(name)
                 item["activity_event_count"] += len(activity)
                 dated = [event.get("datetime") for event in activity if event.get("datetime")]
@@ -96,14 +211,24 @@ def build_manifest(legacy, input_bytes: bytes, input_filename: str) -> dict:
                         item["last_event_ist"] = last_dt.isoformat()
                 for event in activity:
                     cat = str(event.get("category", "")).upper()
-                    if cat in {"ENTRY", "ENTRY1", "ENTRY2"}:
+                    if cat in {"ENTRY", "ENTRY1", "ENTRY2", "ENTRY QUAL"}:
                         item["entry_event_count"] += 1
-                    if cat in {"EXIT", "SQROFF", "TIMESQROFF"}:
+                    if cat in {"EXIT", "EXIT1", "EXIT2", "SQROFF", "TIMESQROFF", "EXIT SL/TGT/TSL ON LTP CHANGE"}:
                         item["exit_event_count"] += 1
-                files.append({"filename": name, "detected_type": "activity_log", "strategy_name": strategy_name, "trade_rows": ""})
+                files.append({
+                    "filename": name,
+                    "detected_type": "activity_log",
+                    "strategy_name": strategy_name,
+                    "trade_rows": "",
+                })
                 continue
 
-            files.append({"filename": name, "detected_type": "unrecognised_csv", "strategy_name": "", "trade_rows": ""})
+            files.append({
+                "filename": name,
+                "detected_type": "unrecognised_csv",
+                "strategy_name": "",
+                "trade_rows": "",
+            })
     finally:
         zf.close()
 
@@ -119,7 +244,7 @@ def build_manifest(legacy, input_bytes: bytes, input_filename: str) -> dict:
 
     now = datetime.now(legacy.IST)
     return {
-        "schema_version": "all-options-observation-v1",
+        "schema_version": "all-options-observation-v1.1",
         "collection_scope": "ALL_OPTIONS_STOCK_AND_NIFTY",
         "collection_date_ist": now.date().isoformat(),
         "generated_at_ist": now.isoformat(),
@@ -131,7 +256,7 @@ def build_manifest(legacy, input_bytes: bytes, input_filename: str) -> dict:
         "no_trade_strategy_count": sum(1 for r in rows if not r["position_trade_count"]),
         "strategies": rows,
         "files": files,
-        "note": "V6 observation layer; frozen V5 reconstruction remains unchanged. No-trade strategies are retained as observations, not treated as missing data.",
+        "note": "V6 observation/input-compatibility layer; frozen V5 reconstruction remains unchanged. Compact AlgoStra option symbols are normalised before V5 parsing and generic rebalance filenames are mapped to strategy names from their own activity content.",
     }
 
 
@@ -179,7 +304,8 @@ def build_observation_only_zip(legacy, input_bytes: bytes, input_filename: str, 
 def wrap_v6_job_worker(production, original_worker):
     def wrapped(job_id, session_key, input_bytes, input_filename, before_minutes, after_minutes, include_chain, source_meta=None):
         with _CAPTURE_LOCK:
-            manifest = build_manifest(production.legacy, input_bytes, input_filename)
+            normalised_bytes, normalisation_meta = normalise_input_for_legacy(production.legacy, input_bytes)
+            manifest = build_manifest(production.legacy, normalised_bytes, input_filename)
             original_publish = production.publish_package
 
             def publish_with_all_options(output_path, evidence_folder_id, status_folder_id=None, source_meta=None, job_summary=None):
@@ -189,6 +315,7 @@ def wrap_v6_job_worker(production, original_worker):
                     "collection_scope": manifest["collection_scope"],
                     "collection_date_ist": manifest["collection_date_ist"],
                     "all_options_observation": True,
+                    **normalisation_meta,
                 })
                 summary = dict(job_summary or {})
                 summary.update({
@@ -198,6 +325,7 @@ def wrap_v6_job_worker(production, original_worker):
                     "all_options_index_strategy_count": manifest["index_option_strategy_count"],
                     "all_options_executed_trade_count": manifest["executed_trade_count"],
                     "all_options_no_trade_strategy_count": manifest["no_trade_strategy_count"],
+                    **normalisation_meta,
                 })
                 return original_publish(output_path, evidence_folder_id, status_folder_id, source_meta=meta, job_summary=summary)
 
@@ -206,12 +334,12 @@ def wrap_v6_job_worker(production, original_worker):
                 original_worker(
                     job_id=job_id,
                     session_key=session_key,
-                    input_bytes=input_bytes,
+                    input_bytes=normalised_bytes,
                     input_filename=input_filename,
                     before_minutes=before_minutes,
                     after_minutes=after_minutes,
                     include_chain=include_chain,
-                    source_meta=source_meta,
+                    source_meta={**dict(source_meta or {}), **normalisation_meta},
                 )
             finally:
                 production.publish_package = original_publish
@@ -219,8 +347,6 @@ def wrap_v6_job_worker(production, original_worker):
             with production.legacy.JOB_LOCK:
                 snapshot = dict(production.legacy.JOBS.get(job_id, {}))
 
-            # If the frozen V5 engine has no executed positions to reconstruct,
-            # preserve the day as an observation-only package rather than losing it.
             message = str(snapshot.get("message", ""))
             if snapshot.get("status") == "error" and "No AlgoStra Positions trades were detected" in message:
                 output_path = build_observation_only_zip(production.legacy, input_bytes, input_filename, manifest, job_id)
@@ -230,16 +356,18 @@ def wrap_v6_job_worker(production, original_worker):
                     production.STATUS_FOLDER_ID or None,
                     source_meta={
                         **dict(source_meta or {}),
+                        **normalisation_meta,
                         "collection_scope": manifest["collection_scope"],
                         "collection_date_ist": manifest["collection_date_ist"],
                         "observation_only": True,
                     },
                     job_summary={
-                        "pipeline_version": "6.3+all-options-observation-v1",
+                        "pipeline_version": "6.3+all-options-observation-v1.1",
                         "reconstruction_engine": "V5 frozen (not invoked: zero executed positions)",
                         "all_options_strategy_count": manifest["strategy_count"],
                         "all_options_no_trade_strategy_count": manifest["no_trade_strategy_count"],
                         "observation_only": True,
+                        **normalisation_meta,
                     },
                 )
                 production.legacy.set_job(
@@ -250,13 +378,14 @@ def wrap_v6_job_worker(production, original_worker):
                     output_path=output_path,
                     output_filename=Path(output_path).name,
                     summary={
-                        "pipeline_version": "6.3+all-options-observation-v1",
+                        "pipeline_version": "6.3+all-options-observation-v1.1",
                         "ready_for_trading_brain": True,
                         "observation_only": True,
                         "all_options_strategy_count": manifest["strategy_count"],
                         "all_options_stock_strategy_count": manifest["stock_option_strategy_count"],
                         "all_options_index_strategy_count": manifest["index_option_strategy_count"],
                         "all_options_no_trade_strategy_count": manifest["no_trade_strategy_count"],
+                        **normalisation_meta,
                         "drive_file_id": uploaded.get("id", ""),
                         "drive_file_name": uploaded.get("name", ""),
                         "drive_file_url": uploaded.get("webViewLink", ""),
