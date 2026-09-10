@@ -41,8 +41,12 @@ app = production.app
 # same authenticated Definedge session for a six-month NIFTY50 F&O Top20 study.
 # A research failure never destroys the completed daily evidence package.
 from historical_top20_research import run_six_month_top20
+from all_options_capture import wrap_v6_job_worker
 
-_ORIGINAL_JOB_WORKER_V6 = production.job_worker_v6
+# V6-only observation layer: records every detected option strategy in the input
+# bundle (stock + index), including activity-only/no-trade strategies, while the
+# frozen V5 reconstruction engine remains untouched.
+_ORIGINAL_JOB_WORKER_V6 = wrap_v6_job_worker(production, production.job_worker_v6)
 
 
 def _job_snapshot(job_id):
@@ -162,7 +166,7 @@ def privacy_policy_v6():
 <h2>Data accessed</h2>
 <p>The application may access files in Google Drive that the user explicitly authorizes, together with data required to run the Definedge evidence pipeline.</p>
 <h2>How data is used</h2>
-<p>Authorized Drive data is used only to ingest AlgoStra source ZIP files and publish generated evidence ZIPs and manifests. The application does not sell user data or use Google Drive data for advertising.</p>
+<p>Authorized Drive data is used only to ingest AlgoStra source ZIP files and publish generated trading-evidence packages back to folders selected by the user. The application does not sell user data or use Google Drive data for advertising.</p>
 <h2>Storage and credentials</h2>
 <p>OAuth credentials and API secrets are stored as private environment variables in the user's Render service and are not intentionally written into Google Drive or GitHub. Generated evidence packages are stored in the user's Google Drive. Temporary processing files may exist on the Render service while a collection job runs.</p>
 <h2>Sharing</h2>
