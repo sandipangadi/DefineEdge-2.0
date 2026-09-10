@@ -1,13 +1,13 @@
 """V6 research-only momentum/pattern correlation pack.
 
 This module does not alter the frozen V5 reconstruction engine or trading rules.
-It adds machine-readable research artifacts to each V6 evidence ZIP so subsequent
+It adds machine-readable research artifacts to each V6 evidence ZIP so later
 analysis can correlate actual/missed momentum with documented Definedge P&F
 ecosystem conditions and existing MFE/MAE/giveback metrics.
 
-Important: the pattern registry below is a set of documented ecosystem conditions
-to test, not a claim that each condition occurred. Occurrence detection must be
-supported by the downloaded chart/history data or AlgoStra event logs.
+Pattern entries are hypotheses/conditions to test, not claims that a condition
+occurred. A pattern is only marked observed when market data and a documented or
+platform-native definition support it.
 """
 
 from __future__ import annotations
@@ -21,20 +21,24 @@ from pathlib import Path
 
 
 PATTERN_REGISTRY = [
-    {"id": "PF_DTB", "label": "Double Top Buy", "role": "bullish_entry_candidate", "family": "point_and_figure"},
-    {"id": "PF_DBS", "label": "Double Bottom Sell", "role": "bearish_entry_candidate", "family": "point_and_figure"},
-    {"id": "PF_PRE_DTB", "label": "Pre Double Top Buy", "role": "bullish_entry_candidate", "family": "point_and_figure"},
-    {"id": "PF_PRE_DBS", "label": "Pre Double Bottom Sell", "role": "bearish_entry_candidate", "family": "point_and_figure"},
-    {"id": "PF_AP_BULL", "label": "Affordable probable breakout - Bullish", "role": "bullish_entry_candidate", "family": "point_and_figure"},
-    {"id": "PF_AP_BEAR", "label": "Affordable probable breakout - Bearish", "role": "bearish_entry_candidate", "family": "point_and_figure"},
-    {"id": "DSMART_ABOVE_6", "label": "Above D-Smart (6-period) / price above D-Smart state", "role": "bullish_state_candidate", "family": "d_smart"},
-    {"id": "DSMART_BELOW_6", "label": "Below D-Smart (6-period) / price below D-Smart state", "role": "bearish_state_candidate", "family": "d_smart"},
-    {"id": "DSMART_CLOUD_ABOVE_6", "label": "Price Above D Smart Line Cloud (6)", "role": "bullish_state_candidate", "family": "d_smart"},
-    {"id": "DSMART_CLOUD_BELOW_6", "label": "Price Below D Smart Line Cloud (6)", "role": "bearish_state_candidate", "family": "d_smart"},
-    {"id": "MAST_BULL", "label": "Price/State above MAST", "role": "bullish_state_candidate", "family": "mast"},
-    {"id": "MAST_BEAR", "label": "Price/State below MAST", "role": "bearish_state_candidate", "family": "mast"},
-    {"id": "CAM_H3", "label": "Price above Camarilla H3", "role": "bullish_intraday_state_candidate", "family": "camarilla"},
-    {"id": "CAM_L3", "label": "Price below Camarilla L3", "role": "bearish_intraday_state_candidate", "family": "camarilla"},
+    {"id": "PF_DTB", "label": "Double Top Buy", "role": "confirmed_bullish_breakout_candidate", "family": "point_and_figure"},
+    {"id": "PF_DBS", "label": "Double Bottom Sell", "role": "confirmed_bearish_breakout_candidate", "family": "point_and_figure"},
+    {"id": "PF_PRE_DTB", "label": "Pre Double Top Buy", "role": "platform_pretrigger_candidate", "family": "point_and_figure", "detection_policy": "platform_event_until_formula_verified"},
+    {"id": "PF_PRE_DBS", "label": "Pre Double Bottom Sell", "role": "platform_pretrigger_candidate", "family": "point_and_figure", "detection_policy": "platform_event_until_formula_verified"},
+    {"id": "PF_AP_BULL", "label": "Affordable probable breakout - Bullish", "role": "probable_bullish_setup", "family": "point_and_figure"},
+    {"id": "PF_AP_BEAR", "label": "Affordable probable breakout - Bearish", "role": "probable_bearish_setup", "family": "point_and_figure"},
+    {"id": "DSMART_ABOVE_6", "label": "Above D-Smart (6-period)", "role": "bullish_state_candidate", "family": "d_smart"},
+    {"id": "DSMART_BELOW_6", "label": "Below D-Smart (6-period)", "role": "bearish_state_candidate", "family": "d_smart"},
+    {"id": "DSMART_CLOUD_ABOVE_6", "label": "Price Above D Smart Line Cloud (6)", "role": "bullish_cloud_state_candidate", "family": "d_smart"},
+    {"id": "DSMART_CLOUD_BELOW_6", "label": "Price Below D Smart Line Cloud (6)", "role": "bearish_cloud_state_candidate", "family": "d_smart"},
+    {"id": "DSMART_PULLBACK", "label": "D-Smart Pullback", "role": "trend_pullback_candidate", "family": "d_smart", "detection_policy": "formula_must_be_verified"},
+    {"id": "DSMART_STAR", "label": "D-Smart Star / exhaustion", "role": "exhaustion_candidate", "family": "d_smart", "detection_policy": "formula_must_be_verified"},
+    {"id": "MAST_BULL", "label": "Price above MAST", "role": "bullish_state_candidate", "family": "mast", "detection_policy": "use_actual_period_multiplier_if_known"},
+    {"id": "MAST_BEAR", "label": "Price below MAST", "role": "bearish_state_candidate", "family": "mast", "detection_policy": "use_actual_period_multiplier_if_known"},
+    {"id": "DTDB_BULL", "label": "DTDB bullish momentum state", "role": "bullish_momentum_context", "family": "dtdb", "detection_policy": "formula_must_be_verified"},
+    {"id": "DTDB_BEAR", "label": "DTDB bearish momentum state", "role": "bearish_momentum_context", "family": "dtdb", "detection_policy": "formula_must_be_verified"},
+    {"id": "CAM_H3", "label": "Price above Camarilla H3", "role": "strategy_threshold_context", "family": "camarilla"},
+    {"id": "CAM_L3", "label": "Price below Camarilla L3", "role": "strategy_threshold_context", "family": "camarilla"},
 ]
 
 
@@ -46,9 +50,22 @@ def _read_csv(text: str):
 
 
 def _find_metric_rows(zf: zipfile.ZipFile):
-    """Find whichever existing V5/V6 CSV carries trade-level MFE/MAE metrics."""
+    """Return only true trade-level metric rows, never strategy aggregates.
+
+    Retrospective test on the 09-Sep V6 package showed the old substring-based
+    header check also admitted strategy_comparison.csv because
+    avg_peak_to_exit_giveback_pct contains peak_to_exit_giveback_pct.  Require
+    trade identity columns plus exact metric columns instead.
+    """
     rows = []
     sources = []
+    required_identity = {"trade_number", "strategy_name", "underlying", "tradingsymbol"}
+    exact_metric_fields = {
+        "mfe_pct_from_entry_basis",
+        "mae_pct_from_entry_basis",
+        "peak_to_exit_giveback_pct",
+    }
+
     for name in zf.namelist():
         if not name.lower().endswith(".csv"):
             continue
@@ -56,16 +73,23 @@ def _find_metric_rows(zf: zipfile.ZipFile):
             text = zf.read(name).decode("utf-8-sig", errors="replace")
         except Exception:
             continue
-        header = text.splitlines()[0].lower() if text.splitlines() else ""
-        if "strategy_name" in header and (
-            "mfe_pct_from_entry_basis" in header
-            or "mae_pct_from_entry_basis" in header
-            or "peak_to_exit_giveback_pct" in header
-        ):
-            found = _read_csv(text)
-            if found:
-                rows.extend(found)
-                sources.append(name)
+        first = text.splitlines()[0] if text.splitlines() else ""
+        if not first:
+            continue
+        try:
+            header = {str(x).strip() for x in next(csv.reader([first]))}
+        except Exception:
+            continue
+        if not required_identity.issubset(header):
+            continue
+        if not (header & exact_metric_fields):
+            continue
+        found = _read_csv(text)
+        found = [r for r in found if str(r.get("trade_number", "")).strip() and str(r.get("tradingsymbol", "")).strip()]
+        if found:
+            rows.extend(found)
+            sources.append(name)
+
     return rows, sources
 
 
@@ -74,9 +98,7 @@ def _chart_sources(zf: zipfile.ZipFile):
     result = []
     for name in zf.namelist():
         low = name.lower()
-        if not low.endswith(".csv"):
-            continue
-        if any(token in low for token in ("tick", "minute", "option", "underlying", "chain", "history")):
+        if low.endswith(".csv") and any(token in low for token in ("tick", "minute", "option", "underlying", "chain", "history")):
             result.append(name)
     return sorted(set(result))
 
@@ -110,16 +132,16 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
         trade_queue.append({
             "trade": _metric_summary(row),
             "analysis_objective": {
-                "entry": "Was genuine directional momentum present before/at entry, and how late was the executed entry versus the earliest documented qualifying pattern/state?",
+                "entry": "Was genuine directional momentum present before/at entry, and how late was the executed entry versus the earliest documented qualifying setup/state?",
                 "exit": "When did momentum first materially deteriorate or reverse, and how late/early was the actual exit versus documented opposing/reversal conditions?",
                 "efficiency": "Use MFE, MAE, profit captured and peak-to-exit giveback as outcome measures, not as pattern definitions.",
             },
             "candidate_patterns": [p["id"] for p in PATTERN_REGISTRY],
             "required_evidence": [
                 "downloaded underlying/option tick or 1-minute path",
-                "P&F reconstruction using the tested strategy's box/reversal/price-type settings",
+                "sufficient pre-entry P&F context using tested box/reversal/price-type settings",
                 "timestamped AlgoStra entry/exit/activity events",
-                "documented indicator/pattern definition before declaring a match",
+                "documented or platform-native definition before declaring a pattern match",
             ],
             "status": "queued_for_evidence_correlation",
         })
@@ -138,7 +160,7 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
             })
 
     return {
-        "schema_version": "momentum-pattern-correlation-v1",
+        "schema_version": "momentum-pattern-correlation-v1.1",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "scope": "stock_options_and_index_options",
         "principle": "Judge whether entries coincide with genuine momentum and exits coincide with deterioration/reversal; do not optimise rules from isolated trades.",
@@ -158,7 +180,7 @@ def build_analysis_pack(output_path: str, all_options_manifest: dict) -> dict:
             "post_exit_continuation_or_reversal", "entry_quality_class", "exit_quality_class",
             "evidence_grade", "doc_definition_reference",
         ],
-        "quality_rule": "A pattern/indicator is marked observed only when reconstructed market data and a documented definition both support it. Otherwise status remains unknown/not-computable.",
+        "quality_rule": "A pattern/indicator is marked observed only when reconstructed market data and a documented or platform-native definition both support it. Otherwise status remains unknown/not-computable.",
     }
 
 
