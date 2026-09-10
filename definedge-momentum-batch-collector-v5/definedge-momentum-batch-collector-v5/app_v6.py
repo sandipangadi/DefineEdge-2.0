@@ -42,11 +42,14 @@ app = production.app
 # A research failure never destroys the completed daily evidence package.
 from historical_top20_research import run_six_month_top20
 from all_options_capture import wrap_v6_job_worker
+from momentum_analysis_wrapper import wrap_momentum_analysis
 
-# V6-only observation layer: records every detected option strategy in the input
-# bundle (stock + index), including activity-only/no-trade strategies, while the
-# frozen V5 reconstruction engine remains untouched.
-_ORIGINAL_JOB_WORKER_V6 = wrap_v6_job_worker(production, production.job_worker_v6)
+# V6-only layers: record all stock/index option strategies and append a research
+# correlation pack for P&F/indicator-vs-momentum analysis. Frozen V5 stays intact.
+_ORIGINAL_JOB_WORKER_V6 = wrap_momentum_analysis(
+    production,
+    wrap_v6_job_worker(production, production.job_worker_v6),
+)
 
 
 def _job_snapshot(job_id):
