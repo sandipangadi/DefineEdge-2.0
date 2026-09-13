@@ -245,6 +245,56 @@ else:
     app.add_url_rule("/resend-otp", endpoint="resend_otp_route", view_func=resend_otp_route_v6, methods=["POST"])
 
 
+def _shoonya_probe_page(message=None, error=None, result=None, status_code=200):
+    config = shoonya_config_status()
+    response = make_response(
+        render_template(
+            "shoonya_probe.html",
+            configured=bool(config.get("configured")),
+            message=message,
+            error=error,
+            result=result,
+        )
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response, status_code
+
+
+@app.get("/shoonya")
+def shoonya_page_route():
+    return _shoonya_probe_page()
+
+
+@app.post("/shoonya/probe-page")
+def shoonya_probe_page_route():
+    collector_password = request.form.get("collector_password", "")
+    expected_password = str(getattr(legacy, "COLLECTOR_PASSWORD", "") or "")
+    if not expected_password or not secrets.compare_digest(
+        collector_password,
+        expected_password,
+    ):
+        return _shoonya_probe_page(
+            error="Collector authentication failed.",
+            status_code=401,
+        )
+
+    try:
+        result = shoonya_run_probe(
+            request.form.get("factor2", ""),
+            lookback_days=request.form.get("lookback_days", "7"),
+        )
+        return _shoonya_probe_page(
+            message="Shoonya read-only probe completed successfully.",
+            result=result,
+        )
+    except Exception as exc:
+        return _shoonya_probe_page(
+            error=str(exc),
+            status_code=400,
+        )
+
+
 @app.get("/shoonya/status")
 def shoonya_status_route():
     response = jsonify(shoonya_config_status())
