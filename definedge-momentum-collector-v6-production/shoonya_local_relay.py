@@ -6,7 +6,6 @@ It fetches NIFTY 5-minute data and uploads only a sanitized ZIP to Render.
 No order API is used.
 """
 
-import cgi
 import csv
 import hashlib
 import html
@@ -337,13 +336,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(403)
             return
         try:
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": self.headers.get("Content-Type", "")},
-            )
-            factor2 = form.getfirst("factor2", "")
-            lookback_days = form.getfirst("lookback_days", "7")
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length).decode("utf-8", "replace")
+            form = urllib.parse.parse_qs(raw_body, keep_blank_values=True)
+            factor2 = form.get("factor2", [""])[0]
+            lookback_days = form.get("lookback_days", ["7"])[0]
             result = fetch_nifty(factor2, lookback_days)
             package_name, package_data = package_bytes(result)
             uploaded = upload_to_render(package_name, package_data)
