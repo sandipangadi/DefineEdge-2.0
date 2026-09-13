@@ -1,9 +1,12 @@
 import importlib.util
+import io
 import os
 import secrets
 import sys
 import threading
+import tempfile
 import time
+import zipfile
 from hashlib import sha256
 from pathlib import Path
 
@@ -15,7 +18,7 @@ REPO_ROOT = BASE_DIR.parent
 LEGACY_APP_PATH = REPO_ROOT / "definedge-momentum-batch-collector-v5" / "definedge-momentum-batch-collector-v5" / "app.py"
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
-from drive_bridge import drive_auth_mode, oauth_write_configured, publish_package
+from drive_bridge import drive_auth_mode, oauth_write_configured, publish_package, upload_market_data_package
 from input_zip_validation import validate_and_sanitize_algostra_zip
 from shoonya_probe import config_status as shoonya_config_status, run_probe as shoonya_run_probe
 if not LEGACY_APP_PATH.exists():
@@ -332,3 +335,110 @@ def shoonya_probe_route():
         })
         response.headers["Cache-Control"] = "no-store"
         return response, 400
+
+
+@app.post("/shoonya/relay-ingest")
+def shoonya_relay_ingest_route():
+    collector_password = request.form.get("collector_password", "")
+    expected_password = str(getattr(legacy, "COLLECTOR_PASSWORD", "") or "")
+    if not expected_password or not secrets.compare_digest(
+        collector_password,
+        expected_password,
+    ):
+        return jsonify({
+            "status": "error",
+            "message": "Collector authentication failed.",
+        }), 401
+
+    uploaded = request.files.get("package")
+    if not uploaded or not uploaded.filename:
+        return jsonify({
+            "status": "error",
+            "message": "A Shoonya relay ZIP package is required.",
+        }), 400
+    if not uploaded.filename.lower().endswith(".zip"):
+        return jsonify({
+            "status": "error",
+            "message": "The relay package must be a ZIP file.",
+        }), 400
+
+    package_bytes = uploaded.read()
+    if not package_bytes:
+        return jsonify({
+            "status": "error",
+            "message": "The relay package is empty.",
+        }), 400
+    if len(package_bytes) > 10 * 1024 * 1024:
+        return jsonify({
+            "status": "error",
+            "message": "The relay package exceeds the 10 MB safety limit.",
+        }), 400
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(package_bytes)) as archive:
+            total_size = 0
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                member_path = Path(member.filename)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise RuntimeError("Unsafe path found in relay ZIP.")
+                total_size += member.file_size
+                if member.file_size > 10 * 1024 * 1024 or total_size > 20 * 1024 * 1024:
+                    raise RuntimeError("Relay ZIP contains an oversized file.")
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError("Relay package is not a valid ZIP file.") from exc
+    except Exception as exc:
+        response = jsonify({
+            "status": "error",
+            "message": str(exc),
+            "read_only_probe": True,
+            "orders_enabled": False,
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response, 400
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="shoonya_relay_", suffix=".zip", delete=False) as temp:
+            temp.write(package_bytes)
+            temp_path = Path(temp.name)
+        uploaded_drive, manifest = upload_market_data_package(
+            temp_path,
+            EVIDENCE_FOLDER_ID,
+            STATUS_FOLDER_ID or None,
+            source_meta={
+                "source": "local_shoonya_relay",
+                "uploaded_filename": uploaded.filename,
+            },
+            job_summary={
+                "read_only_probe": True,
+                "orders_enabled": False,
+            },
+        )
+        response = jsonify({
+            "status": "ok",
+            "read_only_probe": True,
+            "orders_enabled": False,
+            "drive_file_id": uploaded_drive.get("id", ""),
+            "drive_file_name": uploaded_drive.get("name", ""),
+            "drive_file_url": uploaded_drive.get("webViewLink", ""),
+            "manifest_status": manifest.get("status", ""),
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except Exception as exc:
+        response = jsonify({
+            "status": "error",
+            "message": str(exc),
+            "read_only_probe": True,
+            "orders_enabled": False,
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response, 400
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass

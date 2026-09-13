@@ -214,3 +214,58 @@ def publish_package(
     ).execute()
 
     return uploaded, manifest
+
+
+def upload_market_data_package(
+    zip_path,
+    evidence_parent_id,
+    status_parent_id=None,
+    source_meta=None,
+    job_summary=None,
+):
+    """Upload a sanitized local-relay market-data package to Drive."""
+    if not evidence_parent_id:
+        raise RuntimeError("Missing GOOGLE_DRIVE_EVIDENCE_FOLDER_ID.")
+
+    service = _write_service()
+    now_ist = datetime.now(IST)
+    day = now_ist.date().isoformat()
+    day_folder_id = _ensure_date_folder(service, evidence_parent_id, day)
+    path = Path(zip_path)
+
+    uploaded = service.files().create(
+        body={"name": path.name, "parents": [day_folder_id]},
+        media_body=MediaFileUpload(
+            str(path),
+            mimetype="application/zip",
+            resumable=True,
+        ),
+        fields="id,name,webViewLink,createdTime,modifiedTime,size",
+        supportsAllDrives=True,
+    ).execute()
+
+    manifest = {
+        "pipeline_version": "shoonya-local-relay-1",
+        "created_at_ist": now_ist.isoformat(),
+        "drive_auth_mode": "user_oauth",
+        "source": source_meta or {},
+        "market_data_package": uploaded,
+        "job_summary": job_summary or {},
+        "status": "ready_for_trading_brain",
+    }
+    manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+    manifest_name = path.stem + "_manifest.json"
+    target_parent = status_parent_id or day_folder_id
+
+    service.files().create(
+        body={"name": manifest_name, "parents": [target_parent]},
+        media_body=MediaIoBaseUpload(
+            io.BytesIO(manifest_bytes),
+            mimetype="application/json",
+            resumable=False,
+        ),
+        fields="id,name,webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+
+    return uploaded, manifest
