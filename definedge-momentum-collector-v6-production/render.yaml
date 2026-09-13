@@ -20,3 +20,15 @@ services:
         sync: false
       - key: GOOGLE_DRIVE_STATUS_FOLDER_ID
         sync: false
+      - key: SHOONYA_USER_ID
+        sync: false
+      - key: SHOONYA_PASSWORD
+        sync: false
+      - key: SHOONYA_VENDOR_CODE
+        sync: false
+      - key: SHOONYA_API_SECRET
+        sync: false
+      - key: SHOONYA_IMEI
+        sync: false
+      - key: SHOONYA_API_BASE
+        sync: false
