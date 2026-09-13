@@ -17,6 +17,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 from drive_bridge import drive_auth_mode, oauth_write_configured, publish_package
 from input_zip_validation import validate_and_sanitize_algostra_zip
+from shoonya_probe import config_status as shoonya_config_status, run_probe as shoonya_run_probe
 if not LEGACY_APP_PATH.exists():
     raise RuntimeError(f"Frozen V5 engine not found: {LEGACY_APP_PATH}")
 spec = importlib.util.spec_from_file_location("definedge_v5_engine", LEGACY_APP_PATH)
@@ -242,3 +243,42 @@ if "resend_otp_route" in app.view_functions:
     app.view_functions["resend_otp_route"] = resend_otp_route_v6
 else:
     app.add_url_rule("/resend-otp", endpoint="resend_otp_route", view_func=resend_otp_route_v6, methods=["POST"])
+
+
+@app.get("/shoonya/status")
+def shoonya_status_route():
+    response = jsonify(shoonya_config_status())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/shoonya/probe")
+def shoonya_probe_route():
+    collector_password = request.form.get("collector_password", "")
+    expected_password = str(getattr(legacy, "COLLECTOR_PASSWORD", "") or "")
+    if not expected_password or not secrets.compare_digest(
+        collector_password,
+        expected_password,
+    ):
+        return jsonify({
+            "status": "error",
+            "message": "Collector authentication failed.",
+        }), 401
+
+    try:
+        result = shoonya_run_probe(
+            request.form.get("factor2", ""),
+            lookback_days=request.form.get("lookback_days", "7"),
+        )
+        response = jsonify(result)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except Exception as exc:
+        response = jsonify({
+            "status": "error",
+            "message": str(exc),
+            "read_only_probe": True,
+            "orders_enabled": False,
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response, 400
