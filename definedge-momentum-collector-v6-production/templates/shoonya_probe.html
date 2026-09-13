@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shoonya Read-Only API Probe</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 18px;background:#f4f6f8;color:#172033}
+.card{background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+.badge{display:inline-block;background:#172033;color:#fff;padding:5px 9px;border-radius:999px;font-size:12px;margin-bottom:10px}
+.muted{color:#5c6675;line-height:1.55}.ok,.err,.warn,.info{padding:13px 15px;border-radius:9px;margin:16px 0}
+.ok{background:#eaf8ee}.err{background:#fdecec}.warn{background:#fff4d8;color:#6b4b00}.info{background:#eef5ff}
+.section{padding-top:18px;margin-top:18px;border-top:1px solid #e5e8ed}
+label{font-weight:600}input{padding:10px;margin:6px 0 14px;max-width:100%;box-sizing:border-box}
+input[type=password],input[type=number]{width:280px}
+button,.btn{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointer;text-decoration:none;display:inline-block}
+button{background:#172033;color:#fff}.btn{background:#e7eaf0;color:#172033}
+.small{font-size:13px;color:#687284;line-height:1.55}pre{white-space:pre-wrap;overflow:auto;background:#f4f6f8;padding:14px;border-radius:9px}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="badge">READ-ONLY SHOONYA PROBE</div>
+<h1>Shoonya API connection test</h1>
+<p class="muted">This page tests authentication, the NIFTY quote, and a small 5-minute historical sample. It cannot place, modify, or cancel orders.</p>
+{% if configured %}
+<div class="ok"><b>Configuration:</b> all required Shoonya variables are present.</div>
+{% else %}
+<div class="err"><b>Configuration:</b> one or more required Shoonya variables are missing. Check the Render Environment tab.</div>
+{% endif %}
+{% if message %}<div class="ok">{{ message }}</div>{% endif %}
+{% if error %}<div class="err"><b>Probe failed:</b> {{ error }}</div>{% endif %}
+<div class="section">
+<form method="post" action="/shoonya/probe-page" autocomplete="off">
+<label for="collector_password">Collector password</label><br>
+<input id="collector_password" type="password" name="collector_password" required autocomplete="current-password"><br>
+<label for="factor2">Shoonya OTP/TOTP</label><br>
+<input id="factor2" type="password" name="factor2" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required><br>
+<label for="lookback_days">Historical lookback days (1–30)</label><br>
+<input id="lookback_days" type="number" name="lookback_days" value="7" min="1" max="30"><br>
+<button type="submit">Run read-only Shoonya probe</button>
+</form>
+</div>
+{% if result %}
+<div class="section">
+<h2>Sanitized result</h2>
+<pre>{{ result|tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+<div class="section small">
+Credentials and OTP are used only for this request and are not written to the page or stored by the probe. Enter them only on this HTTPS page, not in ChatGPT.
+</div>
+<p><a class="btn" href="/shoonya/status">View configuration status</a></p>
+</div>
+</body>
+</html>
