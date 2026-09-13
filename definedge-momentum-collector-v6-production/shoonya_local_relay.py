@@ -25,6 +25,8 @@ from zoneinfo import ZoneInfo
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / ".env.shoonya"
+if not CONFIG_PATH.exists() and (BASE_DIR / "env.shoonya").exists():
+    CONFIG_PATH = BASE_DIR / "env.shoonya"
 DEFAULT_RENDER_URL = "https://definedge-momentum-batch-collector-v6.onrender.com"
 LOCAL_URL = "http://127.0.0.1:8765/"
 API_ROOT = os.getenv("SHOONYA_API_BASE", "https://api.shoonya.com/NorenWClientTP/").rstrip("/") + "/"
@@ -348,8 +350,8 @@ button{padding:12px 18px;border:0;border-radius:9px;font-size:16px;cursor:pointe
 <div class="info"><b>OTP:</b> Open the Shoonya Authenticator/Chrome extension and enter the current 6-digit TOTP. This page does not send an SMS.</div>
 <div class="section"><form method="post" action="/run" autocomplete="off">
 <label for="factor2">Shoonya TOTP</label><br><input id="factor2" name="factor2" type="password" inputmode="numeric" autocomplete="one-time-code" maxlength="12" required><br>
-<label for="from_date">From date (YYYY-MM-DD; optional)</label><br><input id="from_date" name="from_date" type="text" value=""" + html.escape(cfg("DATA_FROM_DATE")) + """ placeholder="2026-02-25"><br>
-<label for="to_date">To date (YYYY-MM-DD; optional)</label><br><input id="to_date" name="to_date" type="text" value=""" + html.escape(cfg("DATA_TO_DATE")) + """ placeholder="2026-05-18"><br>
+<label for="from_date">From date (YYYY-MM-DD; optional)</label><br><input id="from_date" name="from_date" type="text" value="2026-02-25" placeholder="YYYY-MM-DD"><br>
+<label for="to_date">To date (YYYY-MM-DD; optional)</label><br><input id="to_date" name="to_date" type="text" value="2026-05-18" placeholder="YYYY-MM-DD"><br>
 <label for="lookback_days">Fallback lookback days (1–240)</label><br><input id="lookback_days" name="lookback_days" type="number" value="7" min="1" max="240"><br>
 <button type="submit">Fetch and upload read-only data</button>
 </form></div>
