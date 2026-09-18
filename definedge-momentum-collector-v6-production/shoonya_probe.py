@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -44,15 +45,34 @@ def _api_call(action, payload, session_key=None):
     if session_key:
         body["jKey"] = session_key
 
-    response = requests.post(
-        API_ROOT + action,
-        data=body,
-        timeout=30,
-    )
+    response = None
+    for attempt in range(3):
+        response = requests.post(
+            API_ROOT + action,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "TradingBrainShoonyaProbe/1.1",
+            },
+            timeout=30,
+        )
+        if response.status_code not in {502, 503, 504} or attempt == 2:
+            break
+        time.sleep(1.5 * (attempt + 1))
+
+    raw_body = (response.text or "").strip()
     try:
         data = response.json()
     except ValueError:
-        data = {"stat": "Not_Ok", "emsg": "Shoonya returned non-JSON data."}
+        data = {
+            "stat": "Not_Ok",
+            "emsg": (
+                "Shoonya returned non-JSON data: "
+                f"{raw_body[:500] or '<empty response body>'}"
+            ),
+            "http_status": response.status_code,
+            "content_type": response.headers.get("Content-Type", ""),
+        }
 
     if not isinstance(data, dict) and not isinstance(data, list):
         data = {"stat": "Not_Ok", "emsg": "Shoonya returned an unexpected response."}
