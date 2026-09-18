@@ -21,6 +21,7 @@ if str(BASE_DIR) not in sys.path:
 from drive_bridge import drive_auth_mode, oauth_write_configured, publish_package, upload_market_data_package
 from input_zip_validation import validate_and_sanitize_algostra_zip
 from shoonya_probe import config_status as shoonya_config_status, run_probe as shoonya_run_probe
+from session_enrichment import enrich_package as enrich_session_package
 if not LEGACY_APP_PATH.exists():
     raise RuntimeError(f"Frozen V5 engine not found: {LEGACY_APP_PATH}")
 spec = importlib.util.spec_from_file_location("definedge_v5_engine", LEGACY_APP_PATH)
@@ -113,6 +114,31 @@ def job_worker_v6(job_id, session_key, input_bytes, input_filename, before_minut
     try:
         legacy.build_v5_package(job_id, session_key, input_bytes, input_filename, before_minutes, after_minutes, include_chain)
         with legacy.JOB_LOCK:
+            pre_enrichment_job = dict(legacy.JOBS.get(job_id, {}))
+        pre_enrichment_output = pre_enrichment_job.get("output_path")
+        enrichment_summary = {}
+        if pre_enrichment_output:
+            legacy.set_job(
+                job_id,
+                status="running",
+                progress=97,
+                message="Core evidence complete. Adding 09:15 session history and OI attribution...",
+            )
+            try:
+                enrichment_summary = enrich_session_package(
+                    pre_enrichment_output,
+                    session_key,
+                    input_bytes,
+                    legacy,
+                    job_id,
+                )
+            except Exception as enrichment_exc:
+                enrichment_summary = {
+                    "session_enrichment_version": "6.4",
+                    "session_enrichment_error": str(enrichment_exc),
+                    "session_enrichment_complete": False,
+                }
+        with legacy.JOB_LOCK:
             job = dict(legacy.JOBS.get(job_id, {}))
         output_path = job.get("output_path")
         if not output_path:
@@ -131,13 +157,13 @@ def job_worker_v6(job_id, session_key, input_bytes, input_filename, before_minut
             with legacy.JOB_LOCK:
                 latest_job = dict(legacy.JOBS.get(job_id, {}))
             summary = dict(latest_job.get("summary", {}))
-            summary.update({"pipeline_version": "6.3", "reconstruction_engine": "V5 frozen", "ready_for_trading_brain": False, "local_evidence_ready": True, "drive_auth_mode": drive_auth_mode(), "drive_publish_error": str(publish_exc), "source_input": input_filename})
+            summary.update({"pipeline_version": "6.4", "reconstruction_engine": "V5 frozen + V6.4 session enrichment", **enrichment_summary, "ready_for_trading_brain": False, "local_evidence_ready": True, "drive_auth_mode": drive_auth_mode(), "drive_publish_error": str(publish_exc), "source_input": input_filename})
             legacy.set_job(job_id, status="error", progress=100, message=f"Evidence package is complete, but Drive publication failed: {publish_exc} Download Evidence ZIP below; Definedge collection does not need to be rerun.", summary=summary, output_path=output_path, output_filename=Path(output_path).name)
             return
         with legacy.JOB_LOCK:
             latest_job = dict(legacy.JOBS.get(job_id, {}))
         summary = dict(latest_job.get("summary", {}))
-        summary.update({"drive_file_id": uploaded.get("id", ""), "drive_file_name": uploaded.get("name", ""), "drive_file_url": uploaded.get("webViewLink", ""), "pipeline_version": "6.3", "reconstruction_engine": "V5 frozen", "ready_for_trading_brain": True, "local_evidence_ready": True, "drive_auth_mode": drive_auth_mode(), "manifest_status": manifest.get("status", ""), "source_input": input_filename})
+        summary.update({"drive_file_id": uploaded.get("id", ""), "drive_file_name": uploaded.get("name", ""), "drive_file_url": uploaded.get("webViewLink", ""), "pipeline_version": "6.4", "reconstruction_engine": "V5 frozen + V6.4 session enrichment", **enrichment_summary, "ready_for_trading_brain": True, "local_evidence_ready": True, "drive_auth_mode": drive_auth_mode(), "manifest_status": manifest.get("status", ""), "source_input": input_filename})
         legacy.set_job(job_id, status="done", progress=100, message="Completed and published to Trading Brain Drive.", summary=summary)
     except Exception as exc:
         legacy.set_job(job_id, status="error", progress=100, message=str(exc))
@@ -153,7 +179,7 @@ def collect_route_v6():
             raise RuntimeError("Enter the Definedge OTP.")
         uploaded = request.files.get("algostra_zip")
         if not uploaded or not uploaded.filename:
-            raise RuntimeError("Select today's AlgoStra ZIP. V6.3 will not silently use an older Drive ZIP.")
+            raise RuntimeError("Select today's AlgoStra ZIP. V6.4 will not silently use an older Drive ZIP.")
         if not uploaded.filename.lower().endswith(".zip"):
             raise RuntimeError("AlgoStra input must be one ZIP file.")
         input_bytes = uploaded.read()
@@ -173,7 +199,7 @@ def collect_route_v6():
         job_id = secrets.token_urlsafe(18)
         source_meta = {
             "name": uploaded.filename,
-            "source": "manual_upload_v6.3_dynamic",
+            "source": "manual_upload_v6.4_dynamic",
             "csv_count_original": input_audit["csv_count_original"],
             "csv_count_sanitized": input_audit["csv_count_sanitized"],
             "input_audit": input_audit,
@@ -191,7 +217,7 @@ def collect_route_v6():
                 "output_path": "",
                 "output_filename": "",
                 "summary": {
-                    "pipeline_version": "6.3",
+                    "pipeline_version": "6.4",
                     "ready_for_trading_brain": False,
                     "drive_auth_mode": drive_auth_mode(),
                     "source_input": uploaded.filename,
@@ -234,7 +260,7 @@ def download_route_v6(job_id):
 
 def health_v6():
     missing = _drive_config_status()
-    return {"status": "ok" if not missing else "configuration_incomplete", "version": "6.3", "reconstruction_engine": "V5 frozen", "input_mode": "explicit_manual_zip_dynamic", "drive_configured": not bool(missing), "drive_auth_mode": drive_auth_mode(), "drive_oauth_write_ready": oauth_write_configured(), "missing_configuration": missing}
+    return {"status": "ok" if not missing else "configuration_incomplete", "version": "6.4", "reconstruction_engine": "V5 frozen + V6.4 session enrichment", "input_mode": "explicit_manual_zip_dynamic", "drive_configured": not bool(missing), "drive_auth_mode": drive_auth_mode(), "drive_oauth_write_ready": oauth_write_configured(), "missing_configuration": missing}
 
 app.view_functions["home"] = home_v6
 app.view_functions["send_otp_route"] = send_otp_route_v6
