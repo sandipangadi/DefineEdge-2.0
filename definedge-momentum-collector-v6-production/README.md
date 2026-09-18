@@ -28,6 +28,23 @@ The intended Render root directory is:
 
 V6 is now treated primarily as the historical evidence/reconstruction layer. Google Drive write OAuth is not a dependency for the future live Trading Brain.
 
+
+## V6.4 session/OI enrichment
+
+After the frozen V5 reconstruction finishes, production V6.4 now appends a separate enrichment layer without changing the V5 engine:
+
+- Full-session 1-minute history from 09:15 to 15:30 IST for each exact traded option.
+- Full-session 1-minute history for the matching cash underlying.
+- Matching stock/index futures 1-minute history where the contract can be resolved, including derivative OI.
+- NIFTY 50 1-minute benchmark history.
+- `analysis/oi_momentum_attribution.csv` with option and futures price/OI at entry, option-MFE time and exit, plus entry-to-MFE and entry-to-exit changes.
+- Futures price/OI classification: LONG_BUILDUP, SHORT_COVERING, SHORT_BUILDUP, LONG_UNWINDING, or FLAT_OR_MIXED.
+- `manifest/session_enrichment.json` with stream counts and any enrichment errors.
+
+Option OI is deliberately not labelled as short covering/long buildup mechanically because option OI is two-sided. The futures series is the primary source for the standard price-vs-OI attribution.
+
+Definedge historical minute data supplies OHLCV and OI for derivatives. It does not supply historical IV/Greeks in that endpoint, so IV/Greeks remain a separate derived/Opstra evidence layer rather than being fabricated by the collector.
+
 ## Live Trading Brain direction
 
 The approved next architecture is cloud-only and does not require ChatGPT in the live decision loop:
