@@ -1,0 +1,88 @@
+{
+  "title": "10-Sep-2026 full-session P&F momentum correlation study",
+  "status": "research_spec_not_implemented",
+  "governance": {
+    "frozen_v5_v6_unchanged": true,
+    "purpose": "reproducible research artifact; not a live trading-rule change",
+    "all_signals_not_only_trades": true,
+    "no_hindsight_pattern_labels": true
+  },
+  "session": {
+    "date": "2026-09-10",
+    "timezone": "Asia/Kolkata",
+    "start": "09:15",
+    "end": "15:30"
+  },
+  "universe": {
+    "source_group": "RS MTF V2 Q4",
+    "include": "all underlyings and exact option contracts generating same-day backtest signals/trades",
+    "include_algostra_positions_and_activity_logs": true
+  },
+  "market_data": {
+    "minimum": "1-minute OHLCV for underlying and exact option contracts",
+    "ticks": "include if Definedge API provides them",
+    "full_session": true
+  },
+  "pnf": {
+    "chart_type": "Point & Figure",
+    "box_size_percent": 0.25,
+    "reversal": 3,
+    "price_type": "Close Only",
+    "timeframe": "1 Min",
+    "entry_eligibility": "09:20"
+  },
+  "reference_backtest": {
+    "direction": "Long",
+    "entry": "Pre Affordable probable breakout",
+    "exit": "Pre Double Bottom Sell",
+    "stop_loss_percent": 15,
+    "trailing_stop_loss_percent": 10,
+    "forced_exit": "15:05",
+    "lots": 1,
+    "capital_inr": 100000,
+    "slippage_percent": 2,
+    "trend_filter": "OFF"
+  },
+  "overlays": [
+    "Affordable Probable Breakout event",
+    "DTB/DBS where independently reproducible",
+    "platform-native Pre-DTB/Pre-DBS events",
+    "D-Smart 6 state only when formula/exported state is verified",
+    "RS state",
+    "session VWAP",
+    "ATR"
+  ],
+  "per_signal_outputs": [
+    "setup_time",
+    "confirmation_time",
+    "strategy_signal_time",
+    "actual_entry_time",
+    "entry_delay_minutes_or_boxes",
+    "mfe_time",
+    "mfe_pct",
+    "mae_pct",
+    "momentum_deterioration_time",
+    "first_opposing_pattern_time",
+    "actual_exit_time",
+    "exit_delay_minutes_or_boxes",
+    "peak_to_exit_giveback_pct",
+    "available_profit_captured_pct",
+    "post_exit_continuation_or_reversal",
+    "entry_quality_class",
+    "exit_quality_class",
+    "evidence_grade"
+  ],
+  "required_studies": [
+    "all valid signals vs AlgoStra trades vs missed setups",
+    "positive-expectancy vs negative-expectancy AP cohorts without hindsight selection",
+    "SL/TSL ratchet simulation only after favourable movement",
+    "structural P&F exit vs percentage TSL",
+    "VWAP location and distance at setup/entry/MFE/exit",
+    "ATR-normalized entry extension, MFE, MAE and giveback"
+  ],
+  "unresolved": [
+    "Existing trade-window evidence is insufficient to prove every full-session missed P&F setup.",
+    "Do not independently detect proprietary Definedge indicators until formulas or exported states are verified.",
+    "Current correlation module registers VWAP/ATR fields but does not yet compute all overlay values."
+  ]
+}
