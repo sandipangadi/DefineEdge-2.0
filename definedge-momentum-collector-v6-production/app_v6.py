@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import logging
 import os
 import secrets
 import sys
@@ -12,6 +13,18 @@ from pathlib import Path
 
 from flask import jsonify, make_response, render_template, request, send_file
 from jinja2 import FileSystemLoader
+
+# Structured auth diagnostics. Render captures stdout into its platform log
+# viewer regardless of instance restarts, so this is the durable copy of
+# auth-failure evidence -- the webpage error message alone disappears the
+# moment the user navigates away or the dyno recycles.
+auth_logger = logging.getLogger("definedge_v6.auth")
+if not auth_logger.handlers:
+    _auth_handler = logging.StreamHandler()
+    _auth_handler.setFormatter(logging.Formatter("%(asctime)s auth_v6 %(message)s"))
+    auth_logger.addHandler(_auth_handler)
+    auth_logger.setLevel(logging.INFO)
+    auth_logger.propagate = False
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
@@ -92,21 +105,43 @@ def authenticate_v6(state_id, otp):
     legacy.cleanup_states()
     state = legacy.OTP_STATES.get(state_id)
     if not state or not state.get("password_verified"):
+        auth_logger.warning("attempt_rejected reason=no_state_or_unverified state_present=%s", bool(state))
         raise RuntimeError("OTP session expired. Use Send Fresh OTP or start again with the collector password.")
     otp_code = str(otp or "").strip()
     otp_token = str(state.get("otp_token") or "").strip()
+    otp_token_age_s = round(time.time() - state.get("created", time.time()), 1)
     if not otp_code:
         raise RuntimeError("Enter the Definedge OTP.")
     if not otp_token:
+        auth_logger.warning("attempt_rejected reason=missing_otp_token otp_token_age_s=%s", otp_token_age_s)
         raise RuntimeError("OTP token is missing. Click Send Fresh OTP.")
     ac = sha256(f"{otp_token}{otp_code}{legacy.API_SECRET}".encode("utf-8")).hexdigest()
+    request_fields_present = {
+        "otp_token": bool(otp_token),
+        "otp": bool(otp_code),
+        "ac": bool(ac),
+        "api_secret_len": len(legacy.API_SECRET),  # length only -- never the value
+        "api_token_len": len(legacy.API_TOKEN),
+    }
     response = legacy.HTTP.post(legacy.TOKEN_URL, json={"otp_token": otp_token, "otp": otp_code, "ac": ac}, headers={"Content-Type": "application/json", "Accept": "application/json"}, timeout=30)
     if not response.ok:
+        # Full (unmasked) response body logged to Render's log stream -- this is
+        # the diagnostic evidence the inline webpage error previously discarded.
+        # Capped at 2000 chars as a sanity bound, not the old 500-char truncation.
+        auth_logger.error(
+            "token_exchange_failed status=%s otp_token_age_s=%s fields=%s body=%s",
+            response.status_code,
+            otp_token_age_s,
+            request_fields_present,
+            response.text[:2000],
+        )
         raise RuntimeError(f"Definedge OTP authentication failed ({response.status_code}): {response.text[:500]}. Use Send Fresh OTP and enter the newest OTP.")
     data = response.json()
     session_key = data.get("api_session_key") or legacy.extract_session_key(data)
     if not session_key:
+        auth_logger.error("token_exchange_no_session_key status=%s otp_token_age_s=%s response_keys=%s", response.status_code, otp_token_age_s, list(data.keys()) if isinstance(data, dict) else type(data).__name__)
         raise RuntimeError("Definedge authentication succeeded but no usable api_session_key was returned.")
+    auth_logger.info("token_exchange_succeeded otp_token_age_s=%s", otp_token_age_s)
     legacy.OTP_STATES.pop(state_id, None)
     return session_key
 
