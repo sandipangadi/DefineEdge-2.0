@@ -8,7 +8,6 @@ import threading
 import tempfile
 import time
 import zipfile
-from hashlib import sha256
 from pathlib import Path
 
 from flask import jsonify, make_response, render_template, request, send_file
@@ -115,31 +114,48 @@ def authenticate_v6(state_id, otp):
     if not otp_token:
         auth_logger.warning("attempt_rejected reason=missing_otp_token otp_token_age_s=%s", otp_token_age_s)
         raise RuntimeError("OTP token is missing. Click Send Fresh OTP.")
-    ac = sha256(f"{otp_token}{otp_code}{legacy.API_SECRET}".encode("utf-8")).hexdigest()
+
+    # IMPORTANT: this used to build its own one-shot token-exchange request
+    # here, with an "ac" = sha256(otp_token + otp + api_secret) checksum
+    # field. That field, and that single-JSON-POST shape, do not appear
+    # anywhere in legacy.authenticate() below -- the frozen V5 engine that
+    # has actually exchanged a real OTP successfully for this account. The
+    # "ac" checksum is from an outside reference (it resembles a different
+    # broker/partner's HMAC-style exchange), not from anything proven to
+    # work against this Definedge environment, and is the most likely
+    # reason the exchange has been returning HTTP 400 "Invalid or
+    # incomplete request": Definedge's Keycloak token endpoint is strict
+    # about request shape, and an unrecognised "ac" field (or the missing
+    # client_id/grant_type on the fallback form) is enough to reject the
+    # whole request before it looks at the OTP at all.
+    #
+    # Fix: delegate to legacy.authenticate(), which performs the two-step
+    # exchange already proven for this account (minimal JSON first, then
+    # the fuller OAuth-style form POST as fallback), and keep this
+    # function's structured logging around that call instead of
+    # reimplementing the exchange.
     request_fields_present = {
         "otp_token": bool(otp_token),
         "otp": bool(otp_code),
-        "ac": bool(ac),
         "api_secret_len": len(legacy.API_SECRET),  # length only -- never the value
         "api_token_len": len(legacy.API_TOKEN),
     }
-    response = legacy.HTTP.post(legacy.TOKEN_URL, json={"otp_token": otp_token, "otp": otp_code, "ac": ac}, headers={"Content-Type": "application/json", "Accept": "application/json"}, timeout=30)
-    if not response.ok:
-        # Full (unmasked) response body logged to Render's log stream -- this is
-        # the diagnostic evidence the inline webpage error previously discarded.
-        # Capped at 2000 chars as a sanity bound, not the old 500-char truncation.
+    try:
+        session_key = legacy.authenticate(state_id, otp_code)
+    except Exception as exc:
+        # legacy.authenticate() already pops OTP_STATES and reports both the
+        # minimal-JSON and fuller-form attempts' status codes/bodies in its
+        # message; log that here with the same structured fields the V6
+        # wrapper already tracks, so Render's log stream keeps full evidence.
         auth_logger.error(
-            "token_exchange_failed status=%s otp_token_age_s=%s fields=%s body=%s",
-            response.status_code,
+            "token_exchange_failed otp_token_age_s=%s fields=%s detail=%s",
             otp_token_age_s,
             request_fields_present,
-            response.text[:2000],
+            str(exc)[:2000],
         )
-        raise RuntimeError(f"Definedge OTP authentication failed ({response.status_code}): {response.text[:500]}. Use Send Fresh OTP and enter the newest OTP.")
-    data = response.json()
-    session_key = data.get("api_session_key") or legacy.extract_session_key(data)
+        raise RuntimeError(f"{exc} Use Send Fresh OTP and enter the newest OTP.") from exc
     if not session_key:
-        auth_logger.error("token_exchange_no_session_key status=%s otp_token_age_s=%s response_keys=%s", response.status_code, otp_token_age_s, list(data.keys()) if isinstance(data, dict) else type(data).__name__)
+        auth_logger.error("token_exchange_no_session_key otp_token_age_s=%s", otp_token_age_s)
         raise RuntimeError("Definedge authentication succeeded but no usable api_session_key was returned.")
     auth_logger.info("token_exchange_succeeded otp_token_age_s=%s", otp_token_age_s)
     legacy.OTP_STATES.pop(state_id, None)
